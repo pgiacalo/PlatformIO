@@ -1,12 +1,16 @@
-/*
-This class is specifically design to allow for calibration of the ADCs on the ESP32. 
+/**
+This class is design to help in the calibration of ESP32 ADCs. 
+When run, it will also output the voltage of the ESP32's internal voltage reference. 
 
 Calibration will potentially make the values returned by the ADC more precise. 
 However, my own testing has shown that the ADC values jump around from moment to moment. 
-So this calibration might not provide any benefit (I have not done a statistical analysis). 
+So this calibration might not provide any benefit (I have not done a statistical analysis
+to find out the difference between a calibrated and uncalibrated ADC). 
 
 Note that you will need to include the esp_adc_cal.h header file and link the esp32-adc-cal 
-library in your project in order to use these functions.
+library in your project in order to use these functions. This file is found in the esp-idf/components
+directory. The required files are installed with the ESP-IDF framework -- Espressif's official 
+IoT Development Framework for the ESP32.
 
 How to use this class:
 
@@ -15,9 +19,11 @@ How to use this class:
 3) It will print the ADC adjusted and non-adjusted voltage measurements to the terminal.
 4) It will also print the adjusted and non-adjusted voltage error (in percent).
 5) Adjust the value of CAL_ADJUSTMENT in the code below to minimize the adjused voltage errors. 
+    - reduce the CAL_ADJUSTMENT value, if the voltage is too high
+    - increase the CAL_ADJUSTMENT value, if the voltage is too low
 
-Once you have determined the best calibration value, you can use it in your other projects to 
-improve the ESP32 ADC performance. 
+Once you have established the optimum calibration value for a particular ESP32 board, you can use 
+the value in your other projects to improve its ADC accuracy. 
 
 
 ===============================
@@ -37,7 +43,6 @@ This ADC has a resolution of 1% and can operate at a maximum sampling rate of 20
 Overall, the ESP32 has a total of three ADCs that can be used to measure analog signals. 
 These ADCs can be used to measure a variety of different signals, including sensor outputs, 
 audio signals, and more.
-
 */
 
 #include <Arduino.h>
