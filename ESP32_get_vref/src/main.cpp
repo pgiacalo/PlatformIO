@@ -55,7 +55,7 @@ audio signals, and more.
 // Start with CAL_ADJUSTMENT at 1.000
 #define CAL_ADJUSTMENT          1.028 // If the "adjusted voltage" is too high, reduce this value (and vis-a-versa)
 
-#define TEST_VOLTAGE            3.000
+#define TEST_VOLTAGE            3.000           //the voltage applied to the assigned ADC_PIN
 #define ADC_PIN                 36              //use GPIO36 to connect the test voltage (i.e., 3.000 volts)
 #define ADC_UNIT                ADC_UNIT_1      //calibrate ADC_UNIT_1 and/or ADC_UNIT_2
 #define ADC_ATTENUATION         ADC_ATTEN_DB_11 //ESP32 attenuates input voltages to allow higher voltage inputs (max 3.3 volts)
@@ -87,7 +87,7 @@ float readAdjustedVoltage(int adc_pin) {
  */
 float getVRef(){
   //populate the ADC struct by selecting: the ADC, input voltage attenuation, ADC bit depth, and nominal vRef 
-  esp_adc_cal_characterize(ADC_UNIT_1, ADC_ATTEN_DB_11, ADC_WIDTH_BIT_12, ADC_NOMINAL_VREF, &adc_chars);
+  esp_adc_cal_characterize(ADC_UNIT, ADC_ATTENUATION, ADC_WIDTH_BIT_12, ADC_NOMINAL_VREF, &adc_chars);
   //set the internal voltage reference from the ESP32 chip (a factory setting, e.g., 1135 mV)
   vref = adc_chars.vref; //millivolts
   Serial.println("---->> actual ESP32 internal vRef, adc_chars.vref=" + String(adc_chars.vref + " mV"));
