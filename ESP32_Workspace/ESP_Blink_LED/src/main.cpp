@@ -15,12 +15,7 @@
 //#define LED 2
 #define LED GPIO_NUM_26
 
-void setup() {
-  // put your setup code here, to run once:
-  Serial.println("========setup() called==========");
-  Serial.begin(115200);
-  pinMode(LED, OUTPUT);
-
+void printChipInfo(){
   Serial.println("\nData determined by the function esp_chip_info()");
   esp_chip_info_t info;
   esp_chip_info(&info);
@@ -33,6 +28,15 @@ void setup() {
   Serial.print("Chip Info Revision: ");
   Serial.println(info.revision, HEX);
   Serial.println();
+}
+
+void setup() {
+  // put your setup code here, to run once:
+  Serial.begin(115200); delay(500); //a short delay is req'd to allow ESP32 to finish Serial output setup
+
+  Serial.println("========setup() called==========");
+  pinMode(LED, OUTPUT);
+  printChipInfo();
 }
 
 /*

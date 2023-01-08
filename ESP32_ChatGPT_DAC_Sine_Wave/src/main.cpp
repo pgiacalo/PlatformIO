@@ -20,7 +20,7 @@
 #include "driver/dac.h"
 #include <stdio.h>
 
-#define FREQUENCY 44000
+#define FREQUENCY 3000
 #define DAC_CHANNEL DAC_CHANNEL_1
 #define DAC_MAX_VALUE 255
 #define DAC_BIT_DEPTH 8
