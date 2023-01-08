@@ -19,8 +19,8 @@ How to use this class:
 3) It will print the ADC adjusted and non-adjusted voltage measurements to the terminal.
 4) It will also print the adjusted and non-adjusted voltage error (in percent).
 5) Adjust the value of CAL_ADJUSTMENT in the code below to minimize the adjused voltage errors. 
-    - reduce the CAL_ADJUSTMENT value, if the voltage is too high
-    - increase the CAL_ADJUSTMENT value, if the voltage is too low
+    - reduce the CAL_ADJUSTMENT value, if the adjusted voltage is too high
+    - increase the CAL_ADJUSTMENT value, if the adjusted voltage is too low
 
 Once you have established the optimum calibration value for a particular ESP32 board, you can use 
 the value in your other projects to improve its ADC accuracy. 
@@ -66,7 +66,7 @@ audio signals, and more.
 #define ADC_MAX_INPUT_VOLTAGE   3.3   //volts (unrelated to the 3.000 input voltage used for calibration)
 #define ADC_NOMINAL_VREF        1100  //millivolts (the actual value varies between ESP32 chips from 1000 to 1200 mV)
 #define ADC_BIT_DEPTH           12    //12 bits used to convert analog input to digital output
-#define ADC_STEPS               (float)(pow(2, ADC_BIT_DEPTH) - 1)
+#define ADC_STEPS               (float)(pow(2, ADC_BIT_DEPTH) - 1) //4095 for 12 bit ADCs
 
 //struct that holds the characteristics of the ADC
 esp_adc_cal_characteristics_t adc_chars;
@@ -100,7 +100,7 @@ void setup() {
 
   //get the internal vRef from the chip
   vref = getVRef();
-  Serial.println("---->> actual ESP32 internal vRef, adc_chars.vref=" + String(adc_chars.vref));
+  Serial.println("---->> actual ESP32 internal reference voltage (millivolts) = " + String(adc_chars.vref));
 }
 
 void loop() {

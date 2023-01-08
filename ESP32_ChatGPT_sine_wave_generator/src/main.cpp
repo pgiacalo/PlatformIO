@@ -16,7 +16,7 @@
 #define DEBUG         false
 #define DAC_CHANNEL   DAC_CHANNEL_2
 #define FREQUENCY     2000     // the desired frequency of the output waveform
-#define SAMPLE_RATE   16384    // per Nyquist, set this to be at least 2 x FREQUENCY
+#define SAMPLE_RATE   4096    // per Nyquist, set this to be at least 2 x FREQUENCY
 #define TIMER_DIVIDER 80      // 80MHz timer frequency
 
 //do NOT change the following 2 values
