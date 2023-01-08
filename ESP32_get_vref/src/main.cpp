@@ -14,7 +14,7 @@ IoT Development Framework for the ESP32.
 
 How to use this class:
 
-1) Connect a precise 3.000 volt source to pin GPIO36.
+1) Connect a precise 3.000 volt source to ESP32 pin GPIO36 and ground. 
 2) Run this code.
 3) It will print the ADC adjusted and non-adjusted voltage measurements to the terminal.
 4) It will also print the adjusted and non-adjusted voltage error (in percent).
@@ -55,6 +55,7 @@ audio signals, and more.
 // Start with CAL_ADJUSTMENT at 1.000
 #define CAL_ADJUSTMENT          1.028 // If the "adjusted voltage" is too high, reduce this value (and vis-a-versa)
 
+#define TEST_VOLTAGE            3.000
 #define ADC_PIN                 36              //use GPIO36 to connect the test voltage (i.e., 3.000 volts)
 #define ADC_UNIT                ADC_UNIT_1      //calibrate ADC_UNIT_1 and/or ADC_UNIT_2
 #define ADC_ATTENUATION         ADC_ATTEN_DB_11 //ESP32 attenuates input voltages to allow higher voltage inputs (max 3.3 volts)
@@ -103,13 +104,13 @@ void setup() {
 }
 
 void loop() {
-  float unadjusted_voltage = (analogRead(ADC_PIN) / 4095.0 * 3.3);
+  float unadjusted_voltage = (analogRead(ADC_PIN) / ADC_STEPS * ADC_MAX_INPUT_VOLTAGE);
   float adjusted_voltage   = readAdjustedVoltage(ADC_PIN);
   
   Serial.println();
-  Serial.println("Test with 3.000 volts on pin GPIO" + String(ADC_PIN));
+  Serial.println("Test with " + String(TEST_VOLTAGE) + " volts on pin GPIO" + String(ADC_PIN));
   Serial.println("------------------------------------");
-  Serial.println("Adjusted Voltage    = " + String(adjusted_voltage, 3) + "v  " + String(adjusted_voltage / 3.00 * 100 - 100) + "% error");
-  Serial.println("Un-adjusted Voltage = " + String(unadjusted_voltage, 3) + "v  " + String(unadjusted_voltage / 3.00 * 100 - 100) + "% error");
+  Serial.println("Adjusted Voltage    = " + String(adjusted_voltage, 3) + "v  " + String(adjusted_voltage / TEST_VOLTAGE * 100 - 100) + "% error");
+  Serial.println("Un-adjusted Voltage = " + String(unadjusted_voltage, 3) + "v  " + String(unadjusted_voltage / TEST_VOLTAGE * 100 - 100) + "% error");
   delay(DELAY_BETWEEN_TESTS);
 }
