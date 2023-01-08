@@ -12,18 +12,20 @@
 #include "driver/dac.h"
 #include "driver/timer.h"
 #include "esp_system.h"
+#include "stdio.h"
 
+#define FREQUENCY     10    // the desired frequency (Hz) of the output waveform
+#define SAMPLE_RATE   44000 // ADC samples per cycle. Per Nyquist, set this to be at least 2 x FREQUENCY
+#define ATTENUATION   0.5   // the output voltage attenuation (must be 1.0 or less)
 #define DEBUG         false
 #define DAC_CHANNEL   DAC_CHANNEL_2
-#define FREQUENCY     2000     // the desired frequency of the output waveform
-#define SAMPLE_RATE   4096    // per Nyquist, set this to be at least 2 x FREQUENCY
-#define TIMER_DIVIDER 80      // 80MHz timer frequency
+#define TIMER_DIVIDER 80     // timer frequency in MHz
 
 //do NOT change the following 2 values
-#define MAX_DAC_VALUE 255    //the ESP32 DAC bit depth (this is fixed in the hardware)
-#define AMPLITUDE     127    //set to half of the MAX_DAC_VALUE to stay within ESP32 voltage range
+#define MAX_DAC_VALUE 255    //the maximum ESP32 DAC value (8 bit DAC. this is fixed in the hardware)
+#define AMPLITUDE     127    //amplitude of output waveform
 
-int sine_wave[SAMPLE_RATE];   // global sine wave array
+int sine_wave[SAMPLE_RATE];   // array that holds sine wave values
 int wave_index = 0;           // current position in sine wave array
 
 hw_timer_t * timer = NULL;
@@ -34,7 +36,9 @@ void onTimer() {
     Serial.print("sine_wave[wave_index] = " + String(sine_wave[wave_index]));
   }
 
-  dac_output_voltage(DAC_CHANNEL, sine_wave[wave_index]);
+  int value = ATTENUATION * (AMPLITUDE + AMPLITUDE * sin((2 * PI * FREQUENCY * wave_index) / SAMPLE_RATE));
+  dac_output_voltage(DAC_CHANNEL, value);
+//  dac_output_voltage(DAC_CHANNEL, sine_wave[wave_index]);
   wave_index++;
   if (wave_index >= SAMPLE_RATE) {
     wave_index = 0;  // wrap around to start of sine wave array
@@ -43,29 +47,35 @@ void onTimer() {
 
 void printArray(){
   for (int i = 0; i < sizeof(sine_wave)/sizeof(sine_wave[0]); i++) {
-    Serial.print(i); Serial.print(") ");
-    Serial.print(", " + String(sine_wave[i]));
+    Serial.print(i); Serial.print(") "); 
+    Serial.print(String(sine_wave[i]));
+    Serial.print("\n");
   }
 }
 
-void dac_sine_wave_setup(int frequency) {
-  // initialize sine wave array
+void createSineWaveData(int frequency){
+  //populate an array with waveform data
   //note that in order to avoid negative values, AMPLITUDE is added to each value 
   //before inserting into the array
   for (int i = 0; i < SAMPLE_RATE; i++) {
-    sine_wave[i] = AMPLITUDE + (AMPLITUDE * sin((2 * PI * i * frequency) / SAMPLE_RATE));
+    sine_wave[i] = ATTENUATION * (AMPLITUDE + AMPLITUDE * sin((2 * PI * frequency * i) / SAMPLE_RATE));
   }
 
   if (DEBUG){
     printArray();
   }
+}
 
-  timer = timerBegin(0, 80, true);
+void setupCallbackTimer(int frequency) {
+
+  int timer_id = 0;
+  boolean countUp = true;
+  timer = timerBegin(timer_id, TIMER_DIVIDER, countUp);
   timerAttachInterrupt(timer, &onTimer, true);
-  timerAlarmWrite(timer, 1000000 / FREQUENCY, true);
+//  timerAlarmWrite(timer, 1000000 / FREQUENCY, true);
+  timerAlarmWrite(timer, 1000000 / SAMPLE_RATE, true);
   timerAlarmEnable(timer);
 
-  dac_output_enable(DAC_CHANNEL);
 
   // // configure timer
   // timer_config_t timer_config = {
@@ -99,11 +109,15 @@ void setup() {
   Serial.println("---------------- setup(2) called -----------------");
   Serial.print("portTICK_PERIOD_MS="); Serial.println(portTICK_PERIOD_MS);
 
-  dac_sine_wave_setup(FREQUENCY);
+//  createSineWaveData(FREQUENCY);
+
+  setupCallbackTimer(FREQUENCY);
+
+  dac_output_enable(DAC_CHANNEL);
+
 }
 
 void loop(){
   //do nothing, since the timer and callbacks will handle all of the work 
-  //of producing the waveform output. 
+  delay(5000);
 }
-
