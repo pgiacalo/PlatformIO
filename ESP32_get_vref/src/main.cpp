@@ -65,7 +65,7 @@ audio signals, and more.
 //struct that holds the characteristics of the ADC
 esp_adc_cal_characteristics_t adc_chars;
 
-//holds the actual internal vRef of the ESP32 chip (a factory setting, e.g., 1135)
+//holds the actual internal voltage reference of the ESP32 chip (a factory setting, e.g., 1135 mV)
 float vref;
 
 float readAdjustedVoltage(int adc_pin) {
@@ -82,9 +82,9 @@ float readAdjustedVoltage(int adc_pin) {
 float getVRef(){
   //populate the ADC struct by selecting: the ADC, input voltage attenuation, ADC bit depth, and nominal vRef 
   esp_adc_cal_characterize(ADC_UNIT_1, ADC_ATTEN_DB_11, ADC_WIDTH_BIT_12, ADC_NOMINAL_VREF, &adc_chars);
-  //get the internal vRef from the chip
-  vref = adc_chars.vref;
-  Serial.println("---->> actual ESP32 internal vRef, adc_chars.vref=" + String(adc_chars.vref));
+  //set the internal voltage reference from the ESP32 chip (a factory setting, e.g., 1135 mV)
+  vref = adc_chars.vref; //millivolts
+  Serial.println("---->> actual ESP32 internal vRef, adc_chars.vref=" + String(adc_chars.vref + " mV"));
   return vref;
 }
 
