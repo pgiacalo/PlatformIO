@@ -85,10 +85,8 @@ void printArray(){
 
 /**
  * @brief Create a Sine Wave Data object
- * 
- * @param frequency 
  */
-void createSineWaveData(int frequency){
+void createSineWaveData(){
   //populate an array with waveform data
   //note that in order to avoid negative values, AMPLITUDE is added to each value 
   for (int i = 0; i < SAMPLES_PER_SECOND; i++) {
@@ -103,10 +101,8 @@ void createSineWaveData(int frequency){
 /**
  * @brief Configures the callback timer. 
  * The frequency of the callbacks is determined by the given samples_per_second.
- * 
- * @param samples_per_second - the rate at which the waveform is sampled
  */
-void setupCallbackTimer(long samples_per_second) {
+void setupCallbackTimer() {
   // set up timer 0 to generate a callback to onTimer() every 1 microsecond
   int timer_id = 0; //the ESP32 has several timers. Just use 0. 
   boolean countUp = true;
@@ -115,7 +111,7 @@ void setupCallbackTimer(long samples_per_second) {
   timer = timerBegin(timer_id, TIMER_DIVIDER, countUp);
   timerAttachInterrupt(timer, &onTimer, true);
   //timerAlarmWrite() sets up callbacks with a resolution of microseconds
-  timerAlarmWrite(timer, ONE_SECOND_IN_MICROSECONDS / samples_per_second, true);
+  timerAlarmWrite(timer, ONE_SECOND_IN_MICROSECONDS / SAMPLES_PER_SECOND, true);
   timerAlarmEnable(timer);
 }
 
@@ -124,6 +120,7 @@ void setupCallbackTimer(long samples_per_second) {
  * 
  */
 void printSettings(){
+  Serial.println();
   Serial.println();
   Serial.println("=======================================================");
   Serial.print("Waveform generation is ");
@@ -143,10 +140,6 @@ void printSettings(){
   Serial.println();
 }
 
-void printClockSpeed(){
-  //
-}
-
 void setup() {
   Serial.begin(115200); 
   delay(500); //a short delay to allow ESP32 to finish Serial output setup
@@ -154,10 +147,10 @@ void setup() {
   printSettings();
 
   if (GENERATE == STATIC){
-    createSineWaveData(FREQUENCY);
+    createSineWaveData();
   }
 
-  setupCallbackTimer(SAMPLES_PER_SECOND);
+  setupCallbackTimer();
 
   dac_output_enable(DAC_CHANNEL);
 }
