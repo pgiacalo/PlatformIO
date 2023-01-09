@@ -1,5 +1,5 @@
 /**
- * Code for the ESP32 that generates and outputs a sine wave from a DAC channel 
+ * Code for the ESP32 that outputs a sine wave via a DAC channel. 
  * 
  * @file main.cpp
  * @author Philip Giacalone
@@ -14,27 +14,31 @@
 #include "driver/dac.h"
 #include "driver/timer.h"
 
-#define FREQUENCY     440    // the desired frequency (Hz) of the output waveform
-#define SAMPLES_PER_SECOND   20000   // ADC samples per second. Per Nyquist, set this to be at least 2 x FREQUENCY
-#define ATTENUATION   0.8     // output waveform voltage attenuation (must be 1.0 or less)
-#define DEBUG         false
+#define FREQUENCY           500     // the desired frequency (Hz) of the output waveform
+#define SAMPLES_PER_SECOND  40000   // ADC samples per second. Per Nyquist, set this to be at least 2 x FREQUENCY
+#define ATTENUATION         0.8     // output waveform voltage attenuation (must be 1.0 or less)
+#define DEBUG               false
 
+//specify how to generate the sine wave data 
 #define STATIC        0       // waveform values are generated once and stored in an array
 #define DYNAMIC       1       // waveform values are generated dynamically at runtime
-#define GENERATE      STATIC  // STATIC may cause compile failure due to memory "overflow"
+#define GENERATE      DYNAMIC  // STATIC may cause compile failure ("DRAM segment data does not fit") due to memory "overflow"
 
+//specify the DAC channel
 #define DAC_CHANNEL   DAC_CHANNEL_1 // the waveform output pin. (e.g., DAC_CHANNEL_1 or DAC_CHANNEL_2)
-#define TIMER_DIVIDER 80     // timer frequency divider. timer runs at 80MHz by default. a divider of 2 means it runs at 40MHz. 
  
-//do NOT change the following 2 values
+//do NOT change the following values
 #define MAX_DAC_VALUE 255    //the maximum ESP32 DAC value (8 bit DAC. this is fixed in the hardware)
 #define AMPLITUDE     127    //amplitude is half of peak-to-peak
-
+#define TIMER_DIVIDER 80     // timer frequency divider. timer runs at 80MHz by default. a divider of 2 means it runs at 40MHz. 
 #define OMEGA         (2 * PI * FREQUENCY) //the frequency in radians per second
 
+//the array of STATIC sine wave data 
 int sine_wave[SAMPLES_PER_SECOND];   // array that holds sine wave values
+//holds the index of the array
 int wave_index = 0;           // current position in sine wave array
 
+//the timer used to make callbacks to the onTimer() function
 hw_timer_t * timer = NULL;
 
 /** 
@@ -96,11 +100,12 @@ void createSineWaveData(int frequency){
 }
 
 /**
- * @brief Configures the callback timer 
+ * @brief Configures the callback timer. 
+ * The frequency of the callbacks is determined by the given samples_per_second.
  * 
- * @param frequency 
+ * @param samples_per_second - the rate at which the waveform is sampled
  */
-void setupCallbackTimer() {
+void setupCallbackTimer(long samples_per_second) {
   // set up timer 0 to generate a callback to onTimer() every 1 microsecond
   int timer_id = 0; //the ESP32 has several timers. Just use 0. 
   boolean countUp = true;
@@ -109,7 +114,7 @@ void setupCallbackTimer() {
   timer = timerBegin(timer_id, TIMER_DIVIDER, countUp);
   timerAttachInterrupt(timer, &onTimer, true);
   //timerAlarmWrite() sets up callbacks with a resolution of microseconds
-  timerAlarmWrite(timer, ONE_SECOND_IN_MICROSECONDS / SAMPLES_PER_SECOND, true);
+  timerAlarmWrite(timer, ONE_SECOND_IN_MICROSECONDS / samples_per_second, true);
   timerAlarmEnable(timer);
 }
 
@@ -136,7 +141,8 @@ void printSettings(){
 }
 
 void setup() {
-  Serial.begin(115200); delay(500); //a short delay is req'd to allow ESP32 to finish Serial output setup
+  Serial.begin(115200); 
+  delay(500); //a short delay to allow ESP32 to finish Serial output setup
 
   printSettings();
 
@@ -144,7 +150,7 @@ void setup() {
     createSineWaveData(FREQUENCY);
   }
 
-  setupCallbackTimer();
+  setupCallbackTimer(SAMPLES_PER_SECOND);
 
   dac_output_enable(DAC_CHANNEL);
 }
