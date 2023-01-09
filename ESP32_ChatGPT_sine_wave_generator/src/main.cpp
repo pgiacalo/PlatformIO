@@ -1,50 +1,75 @@
-/* Using ChatGPT code to generate a sine wave */
+/**
+ * Code for the ESP32 that generates and outputs a sine wave from a DAC channel 
+ * 
+ * @file main.cpp
+ * @author Philip Giacalone
+ * @brief 
+ * @version 0.1
+ * @date 2023-01-08
+ */
 
 #include <Arduino.h>
 #include "freertos/FreeRTOS.h"
-#include "driver/dac.h"
 #include "esp_system.h"
-#include <stdio.h>
-
-#include "esp_adc_cal.h"
-
-#include "freertos/FreeRTOS.h"
 #include "driver/dac.h"
 #include "driver/timer.h"
-#include "esp_system.h"
-#include "stdio.h"
 
-#define FREQUENCY     10    // the desired frequency (Hz) of the output waveform
-#define SAMPLE_RATE   44000 // ADC samples per cycle. Per Nyquist, set this to be at least 2 x FREQUENCY
-#define ATTENUATION   0.5   // the output voltage attenuation (must be 1.0 or less)
+#define FREQUENCY     440    // the desired frequency (Hz) of the output waveform
+#define SAMPLES_PER_SECOND   20000   // ADC samples per second. Per Nyquist, set this to be at least 2 x FREQUENCY
+#define ATTENUATION   0.8     // output waveform voltage attenuation (must be 1.0 or less)
 #define DEBUG         false
-#define DAC_CHANNEL   DAC_CHANNEL_2
-#define TIMER_DIVIDER 80     // timer frequency in MHz
 
+#define STATIC        0       // waveform values are generated once and stored in an array
+#define DYNAMIC       1       // waveform values are generated dynamically at runtime
+#define GENERATE      STATIC  // STATIC may cause compile failure due to memory "overflow"
+
+#define DAC_CHANNEL   DAC_CHANNEL_1 // the waveform output pin. (e.g., DAC_CHANNEL_1 or DAC_CHANNEL_2)
+#define TIMER_DIVIDER 80     // timer frequency divider. timer runs at 80MHz by default. a divider of 2 means it runs at 40MHz. 
+ 
 //do NOT change the following 2 values
 #define MAX_DAC_VALUE 255    //the maximum ESP32 DAC value (8 bit DAC. this is fixed in the hardware)
-#define AMPLITUDE     127    //amplitude of output waveform
+#define AMPLITUDE     127    //amplitude is half of peak-to-peak
 
-int sine_wave[SAMPLE_RATE];   // array that holds sine wave values
+#define OMEGA         (2 * PI * FREQUENCY) //the frequency in radians per second
+
+int sine_wave[SAMPLES_PER_SECOND];   // array that holds sine wave values
 int wave_index = 0;           // current position in sine wave array
 
 hw_timer_t * timer = NULL;
 
+/** 
+ * The function generates and outputs the sine wave to the DAC channel.
+ * It is called periodically by the timer. The period depends on the SAMPLES_PER_SECOND.
+*/
 void onTimer() {
-  if (DEBUG){
-    Serial.print("called back [" + String(wave_index)); Serial.println("] " + String(sine_wave[wave_index]));
-    Serial.print("sine_wave[wave_index] = " + String(sine_wave[wave_index]));
+  int waveform_value = 0;
+
+  if (GENERATE == STATIC){
+    // get the sine wave value from the pre-loaded, static array of values
+    waveform_value = sine_wave[wave_index];
+  } else {
+    // generate the sine wave value dynamically
+    // note that in order to avoid negative values, AMPLITUDE is added to each value 
+    waveform_value = ATTENUATION * (AMPLITUDE + AMPLITUDE * sin((OMEGA * wave_index) / SAMPLES_PER_SECOND));
   }
 
-  int value = ATTENUATION * (AMPLITUDE + AMPLITUDE * sin((2 * PI * FREQUENCY * wave_index) / SAMPLE_RATE));
-  dac_output_voltage(DAC_CHANNEL, value);
-//  dac_output_voltage(DAC_CHANNEL, sine_wave[wave_index]);
+  // output the voltage to the DAC_CHANNEL
+  dac_output_voltage(DAC_CHANNEL, waveform_value);
+
+  if (DEBUG){
+    Serial.print("onTimer() called "); 
+    Serial.println("[" + String(wave_index) + "] " + String(waveform_value));
+  }
+
   wave_index++;
-  if (wave_index >= SAMPLE_RATE) {
+  if (wave_index >= SAMPLES_PER_SECOND) {
     wave_index = 0;  // wrap around to start of sine wave array
   }
 }
 
+/**
+ * @brief Prints the contents of the sine_wave array to the terminal. Used only for debugging.
+ */
 void printArray(){
   for (int i = 0; i < sizeof(sine_wave)/sizeof(sine_wave[0]); i++) {
     Serial.print(i); Serial.print(") "); 
@@ -53,12 +78,16 @@ void printArray(){
   }
 }
 
+/**
+ * @brief Create a Sine Wave Data object
+ * 
+ * @param frequency 
+ */
 void createSineWaveData(int frequency){
   //populate an array with waveform data
   //note that in order to avoid negative values, AMPLITUDE is added to each value 
-  //before inserting into the array
-  for (int i = 0; i < SAMPLE_RATE; i++) {
-    sine_wave[i] = ATTENUATION * (AMPLITUDE + AMPLITUDE * sin((2 * PI * frequency * i) / SAMPLE_RATE));
+  for (int i = 0; i < SAMPLES_PER_SECOND; i++) {
+    sine_wave[i] = ATTENUATION * (AMPLITUDE + AMPLITUDE * sin((OMEGA * i) / SAMPLES_PER_SECOND));
   }
 
   if (DEBUG){
@@ -66,58 +95,65 @@ void createSineWaveData(int frequency){
   }
 }
 
-void setupCallbackTimer(int frequency) {
-
-  int timer_id = 0;
+/**
+ * @brief Configures the callback timer 
+ * 
+ * @param frequency 
+ */
+void setupCallbackTimer() {
+  // set up timer 0 to generate a callback to onTimer() every 1 microsecond
+  int timer_id = 0; //the ESP32 has several timers. Just use 0. 
   boolean countUp = true;
+  long ONE_SECOND_IN_MICROSECONDS = 1000000; //the timer has a resolution of 1 microsecond
+
   timer = timerBegin(timer_id, TIMER_DIVIDER, countUp);
   timerAttachInterrupt(timer, &onTimer, true);
-//  timerAlarmWrite(timer, 1000000 / FREQUENCY, true);
-  timerAlarmWrite(timer, 1000000 / SAMPLE_RATE, true);
+  //timerAlarmWrite() sets up callbacks with a resolution of microseconds
+  timerAlarmWrite(timer, ONE_SECOND_IN_MICROSECONDS / SAMPLES_PER_SECOND, true);
   timerAlarmEnable(timer);
+}
 
-
-  // // configure timer
-  // timer_config_t timer_config = {
-  //     .alarm_en = TIMER_ALARM_EN,
-  //     .counter_en = TIMER_PAUSE,
-  //     .intr_type = TIMER_INTR_LEVEL,
-  //     .counter_dir = TIMER_COUNT_UP,
-  //     .auto_reload = TIMER_AUTORELOAD_EN,
-  //     .divider = TIMER_DIVIDER
-  // };
-  // timer_init(TIMER_GROUP_0, TIMER_0, &timer_config);
-
-  // // set timer period
-  // uint64_t timer_period = (TIMER_BASE_CLK / SAMPLE_RATE) * (1000000 / frequency);
-  // timer_set_alarm_value(TIMER_GROUP_0, TIMER_0, timer_period);
-
-  // // register timer callback
-  // timer_isr_register(TIMER_GROUP_0, TIMER_0, &onTimer, NULL, ESP_INTR_FLAG_IRAM, NULL);
-
-  // // enable timer
-  // timer_start(TIMER_GROUP_0, TIMER_0);
-
-  // enable DAC output
-
+/**
+ * @brief Prints the settings to the terminal
+ * 
+ */
+void printSettings(){
+  Serial.println();
+  Serial.println("=======================================================");
+  Serial.print("Waveform generation is ");
+  if (GENERATE == STATIC){
+    Serial.println("STATIC");
+  } else if (GENERATE == DYNAMIC){
+    Serial.println("DYNAMIC");
+  } else {
+    Serial.println("(ERROR) UNDEFINED");
+  }
+  
+  Serial.println("Frequency  : " + String(FREQUENCY) + " Hz");
+  Serial.println("Sample Rate: " + String(SAMPLES_PER_SECOND) + " sample per second");
+  Serial.println("=======================================================");
+  Serial.println();
 }
 
 void setup() {
   Serial.begin(115200); delay(500); //a short delay is req'd to allow ESP32 to finish Serial output setup
 
-  printf("---------------- setup(1) called -----------------\n");
-  Serial.println("---------------- setup(2) called -----------------");
-  Serial.print("portTICK_PERIOD_MS="); Serial.println(portTICK_PERIOD_MS);
+  printSettings();
 
-//  createSineWaveData(FREQUENCY);
+  if (GENERATE == STATIC){
+    createSineWaveData(FREQUENCY);
+  }
 
-  setupCallbackTimer(FREQUENCY);
+  setupCallbackTimer();
 
   dac_output_enable(DAC_CHANNEL);
-
 }
 
+/**
+ * @brief Does nothing, since all the work is handled by the timer and onTimer()
+ * 
+ */
 void loop(){
-  //do nothing, since the timer and callbacks will handle all of the work 
-  delay(5000);
+  //do nothing, since the timer and its callbacks to onTimer() handle ALL of the work 
+  delay(60000);
 }
