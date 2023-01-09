@@ -13,7 +13,9 @@
 #include "esp_system.h"
 #include "driver/dac.h"
 #include "driver/timer.h"
+#include "clk.h"
 
+//specify the output frequency, sample rate, and attenuation
 #define FREQUENCY           500     // the desired frequency (Hz) of the output waveform
 #define SAMPLES_PER_SECOND  40000   // ADC samples per second. Per Nyquist, set this to be at least 2 x FREQUENCY
 #define ATTENUATION         0.8     // output waveform voltage attenuation (must be 1.0 or less)
@@ -37,7 +39,6 @@
 int sine_wave[SAMPLES_PER_SECOND];   // array that holds sine wave values
 //holds the index of the array
 int wave_index = 0;           // current position in sine wave array
-
 //the timer used to make callbacks to the onTimer() function
 hw_timer_t * timer = NULL;
 
@@ -136,8 +137,14 @@ void printSettings(){
   
   Serial.println("Frequency  : " + String(FREQUENCY) + " Hz");
   Serial.println("Sample Rate: " + String(SAMPLES_PER_SECOND) + " sample per second");
+  uint32_t clock_speed = esp_clk_cpu_freq() / 1000000;  //MHz  
+  Serial.println("Clock_Speed: " + String(clock_speed) + " MHz");
   Serial.println("=======================================================");
   Serial.println();
+}
+
+void printClockSpeed(){
+  //
 }
 
 void setup() {
