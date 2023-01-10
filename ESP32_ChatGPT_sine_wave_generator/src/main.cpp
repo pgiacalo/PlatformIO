@@ -35,11 +35,11 @@
 #define DAC_CHANNEL         DAC_CHANNEL_1 // the waveform output pin. (e.g., DAC_CHANNEL_1 or DAC_CHANNEL_2)
 
 //These items should probably be left as-is
-#define DEBUG               true
-#define SAMPLES_PER_CYCLE   SAMPLES_PER_SECOND/FREQUENCY 
+#define DEBUG               false
 #define DAC_BIT_DEPTH       8       //ESP32: 8 bits, Arduino: 10 bits or 12 bits
  
-//Do NOT change the following values
+//Do NOT change the following 
+#define SAMPLES_PER_CYCLE   SAMPLES_PER_SECOND/FREQUENCY 
 #define MAX_DAC_VALUE       255     //the maximum ESP32 DAC value (8 bit DAC. this is fixed in the hardware)
 #define AMPLITUDE           127     //amplitude is half of peak-to-peak
 #define TIMER_DIVIDER       40      // timer frequency divider. timer runs at 80MHz by default. a divider of 2 means it runs at 40MHz. 
@@ -74,9 +74,9 @@ void get_heap_info(heap_info_t *info)
 void printHeapInfo(){
   get_heap_info(&heap_info);
   Serial.println("------Heap Info------");
-  Serial.println("Free heap       : " + String(heap_info.free_heap));
-  Serial.println("Min Free heap   : " + String(heap_info.minimum_free_heap));
-  Serial.println("Used Heap       : " + String(heap_info.used_heap));
+  Serial.println("Free heap        : " + String(heap_info.free_heap));
+  Serial.println("Min Free heap    : " + String(heap_info.minimum_free_heap));
+  Serial.println("Used Heap        : " + String(heap_info.used_heap));
 }
 
 void printLinkedList(){
@@ -169,9 +169,7 @@ void setupCallbackTimer() {
 void printSettings(){
   Serial.println();
   Serial.println();
-  Serial.println("=======================================================");
-  Serial.print("Waveform generation is ");
-  
+  Serial.println("=======================================================");  
   Serial.println("Frequency        : " + String(FREQUENCY) + " Hz");
   Serial.println("Sample Rate      : " + String(SAMPLES_PER_SECOND) + " samples per second");
   Serial.println("Samples Per Cycle: " + String(SAMPLES_PER_CYCLE) + " samples per cycle");
