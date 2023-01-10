@@ -1,6 +1,18 @@
 /**
  * Code for the ESP32 that outputs a sine wave via a DAC channel. 
  * 
+ * Note on a waveform's amplitude vs its peak-to-peak value:
+ * 
+ * In mathematics, the amplitude of a sine wave is typically defined as the 
+ * maximum absolute value of the waveform. This is the distance from the 
+ * midpoint of the waveform to the maximum or minimum value of the waveform. 
+ * 
+ * For example, if the sine wave has a maximum value of 3 and a minimum value
+ * of -3, the peak-to-peak value is 6 and the amplitude is 3. 
+ * 
+ * The peak-to-peak value of a waveform is the difference between the maximum 
+ * and minimum values of the waveform, so it is twice the amplitude. 
+ * 
  * @file main.cpp
  * @author Philip Giacalone
  * @brief 
@@ -14,88 +26,121 @@
 #include "driver/dac.h"
 #include "driver/timer.h"
 #include "clk.h"
+#include <stdlib.h>
 
-//specify the output frequency, sample rate, and attenuation
-#define FREQUENCY           500     // the desired frequency (Hz) of the output waveform
-#define SAMPLES_PER_SECOND  40000   // ADC samples per second. Per Nyquist, set this to be at least 2 x FREQUENCY
-#define ATTENUATION         0.8     // output waveform voltage attenuation (must be 1.0 or less)
-#define DEBUG               false
+//Configurable items: specify the output frequency, sample rate, attenuation and DAC Channel
+#define FREQUENCY           197    // the desired frequency (Hz) of the output waveform
+#define SAMPLES_PER_SECOND  14000  // (140000 max) ADC samples per second. Per Nyquist, set this to be at least 2 x FREQUENCY
+#define ATTENUATION         1.0     // output waveform voltage attenuation (must be 1.0 or less)
+#define DAC_CHANNEL         DAC_CHANNEL_1 // the waveform output pin. (e.g., DAC_CHANNEL_1 or DAC_CHANNEL_2)
 
-//specify how to generate the sine wave data 
-#define STATIC        0       // waveform values are generated once and stored in an array
-#define DYNAMIC       1       // waveform values are generated dynamically at runtime
-#define GENERATE      DYNAMIC  // STATIC may cause compile failure ("DRAM segment data does not fit") due to memory "overflow"
-
-//specify the DAC channel
-#define DAC_CHANNEL   DAC_CHANNEL_1 // the waveform output pin. (e.g., DAC_CHANNEL_1 or DAC_CHANNEL_2)
+//These items should probably be left as-is
+#define DEBUG               true
+#define SAMPLES_PER_CYCLE   SAMPLES_PER_SECOND/FREQUENCY 
+#define DAC_BIT_DEPTH       8       //ESP32: 8 bits, Arduino: 10 bits or 12 bits
  
-//do NOT change the following values
-#define MAX_DAC_VALUE 255    //the maximum ESP32 DAC value (8 bit DAC. this is fixed in the hardware)
-#define AMPLITUDE     127    //amplitude is half of peak-to-peak
-#define TIMER_DIVIDER 80     // timer frequency divider. timer runs at 80MHz by default. a divider of 2 means it runs at 40MHz. 
-#define OMEGA         (2 * PI * FREQUENCY) //the frequency in radians per second
+//Do NOT change the following values
+#define MAX_DAC_VALUE       255     //the maximum ESP32 DAC value (8 bit DAC. this is fixed in the hardware)
+#define AMPLITUDE           127     //amplitude is half of peak-to-peak
+#define TIMER_DIVIDER       40      // timer frequency divider. timer runs at 80MHz by default. a divider of 2 means it runs at 40MHz. 
 
-//the array of STATIC sine wave data 
-int sine_wave[SAMPLES_PER_SECOND];   // array that holds sine wave values
-//holds the index of the array
-int wave_index = 0;           // current position in sine wave array
 //the timer used to make callbacks to the onTimer() function
 hw_timer_t * timer = NULL;
+
+// Node structure for a circular linked list.
+// This will hold the waveform values for one complete cycle.
+struct node {
+  int data;
+  struct node *next;
+};
+struct node* currentNode;
+
+// memory information struct
+typedef struct {
+    size_t free_heap;
+    size_t minimum_free_heap;
+    size_t used_heap;
+} heap_info_t;
+
+heap_info_t heap_info;
+
+void get_heap_info(heap_info_t *info)
+{
+    info->free_heap = esp_get_free_heap_size();
+    info->minimum_free_heap = esp_get_minimum_free_heap_size();
+    info->used_heap = info->free_heap - info->minimum_free_heap;
+}
+
+void printHeapInfo(){
+  get_heap_info(&heap_info);
+  Serial.println("------Heap Info------");
+  Serial.println("Free heap       : " + String(heap_info.free_heap));
+  Serial.println("Min Free heap   : " + String(heap_info.minimum_free_heap));
+  Serial.println("Used Heap       : " + String(heap_info.used_heap));
+}
+
+void printLinkedList(){
+  struct node *current = currentNode;
+  Serial.println("-----Linked List Contents-----");
+  do {
+    int value = current->data;
+    Serial.println(String(value));
+    current = current->next;
+  } while (current != currentNode);
+}
+
+// Function to create a circular linked list with a specified size
+struct node* createCircularLinkedList(int size) {
+  struct node *head, *current, *temp;
+
+  // Create the first node
+  head = (struct node*) malloc(sizeof(struct node));
+  head->data = 1;
+  current = head;
+
+  // Create the rest of the nodes
+  for (int i = 0; i < size-1; i++) {
+    temp = (struct node*) malloc(sizeof(struct node));
+    temp->data = i;
+    current->next = temp;
+    current = temp;
+  }
+
+  // Link the last node to the head to create the circular linked list
+  current->next = head;
+
+  return head;
+}
+
+// Function to populate a circular linked list with data from an array
+void populateCircularLinkedList(struct node *head) {
+  struct node *current = head;
+
+  for (int i = 0; i < SAMPLES_PER_CYCLE; i++) {
+    float angleInDegrees = ((float)i) * (360.0/((float)SAMPLES_PER_CYCLE));
+    float angleInRadians = 2.0 * PI * angleInDegrees / 360.0;
+    if (DEBUG){
+      Serial.println("i : degrees : radians " + String(i) + " : " + String(angleInDegrees) + " : " + String(angleInRadians));
+    }
+    long value = ATTENUATION * (AMPLITUDE + AMPLITUDE * sin(angleInRadians));
+    current->data = value;
+    current = current->next;
+  }
+  if (DEBUG){
+    printLinkedList();
+  }
+}
 
 /** 
  * The function generates and outputs the sine wave to the DAC channel.
  * It is called periodically by the timer. The period depends on the SAMPLES_PER_SECOND.
 */
 void onTimer() {
-  int waveform_value = 0;
 
-  if (GENERATE == STATIC){
-    // get the sine wave value from the pre-loaded, static array of values
-    waveform_value = sine_wave[wave_index];
-  } else {
-    // generate the sine wave value dynamically
-    // note that in order to avoid negative values, AMPLITUDE is added to each value 
-    waveform_value = ATTENUATION * (AMPLITUDE + AMPLITUDE * sin((OMEGA * wave_index) / SAMPLES_PER_SECOND));
-  }
-
+  int waveform_value = currentNode->data;
+  currentNode = currentNode->next;
   // output the voltage to the DAC_CHANNEL
   dac_output_voltage(DAC_CHANNEL, waveform_value);
-
-  if (DEBUG){
-    Serial.print("onTimer() called "); 
-    Serial.println("[" + String(wave_index) + "] " + String(waveform_value));
-  }
-
-  wave_index++;
-  if (wave_index >= SAMPLES_PER_SECOND) {
-    wave_index = 0;  // wrap around to start of sine wave array
-  }
-}
-
-/**
- * @brief Prints the contents of the sine_wave array to the terminal. Used only for debugging.
- */
-void printArray(){
-  for (int i = 0; i < sizeof(sine_wave)/sizeof(sine_wave[0]); i++) {
-    Serial.print(i); Serial.print(") "); 
-    Serial.print(String(sine_wave[i]));
-    Serial.print("\n");
-  }
-}
-
-/**
- * @brief Create a Sine Wave Data object
- */
-void createSineWaveData(){
-  //populate an array with waveform data
-  //note that in order to avoid negative values, AMPLITUDE is added to each value 
-  for (int i = 0; i < SAMPLES_PER_SECOND; i++) {
-    sine_wave[i] = ATTENUATION * (AMPLITUDE + AMPLITUDE * sin((OMEGA * i) / SAMPLES_PER_SECOND));
-  }
-
-  if (DEBUG){
-    printArray();
-  }
 }
 
 /**
@@ -106,12 +151,14 @@ void setupCallbackTimer() {
   // set up timer 0 to generate a callback to onTimer() every 1 microsecond
   int timer_id = 0; //the ESP32 has several timers. Just use 0. 
   boolean countUp = true;
-  long ONE_SECOND_IN_MICROSECONDS = 1000000; //the timer has a resolution of 1 microsecond
+
+  long MICROSECONDS_PER_SECOND = 1000000; //the timer has a resolution of 1 microsecond (nice!) 
+  long MICROSECONDS_PER_SAMPLE = MICROSECONDS_PER_SECOND / SAMPLES_PER_SECOND;
 
   timer = timerBegin(timer_id, TIMER_DIVIDER, countUp);
   timerAttachInterrupt(timer, &onTimer, true);
   //timerAlarmWrite() sets up callbacks with a resolution of microseconds
-  timerAlarmWrite(timer, ONE_SECOND_IN_MICROSECONDS / SAMPLES_PER_SECOND, true);
+  timerAlarmWrite(timer, MICROSECONDS_PER_SAMPLE, true);
   timerAlarmEnable(timer);
 }
 
@@ -124,35 +171,40 @@ void printSettings(){
   Serial.println();
   Serial.println("=======================================================");
   Serial.print("Waveform generation is ");
-  if (GENERATE == STATIC){
-    Serial.println("STATIC");
-  } else if (GENERATE == DYNAMIC){
-    Serial.println("DYNAMIC");
-  } else {
-    Serial.println("(ERROR) UNDEFINED");
-  }
   
-  Serial.println("Frequency  : " + String(FREQUENCY) + " Hz");
-  Serial.println("Sample Rate: " + String(SAMPLES_PER_SECOND) + " sample per second");
+  Serial.println("Frequency        : " + String(FREQUENCY) + " Hz");
+  Serial.println("Sample Rate      : " + String(SAMPLES_PER_SECOND) + " samples per second");
+  Serial.println("Samples Per Cycle: " + String(SAMPLES_PER_CYCLE) + " samples per cycle");
   uint32_t clock_speed = esp_clk_cpu_freq() / 1000000;  //MHz  
-  Serial.println("Clock_Speed: " + String(clock_speed) + " MHz");
+  Serial.println("Clock_Speed      : " + String(clock_speed) + " MHz");
+
+  printHeapInfo();
+
   Serial.println("=======================================================");
   Serial.println();
 }
 
 void setup() {
-  Serial.begin(115200); 
-  delay(500); //a short delay to allow ESP32 to finish Serial output setup
+  try {
 
-  printSettings();
+    Serial.begin(115200); 
+    delay(500); //a short delay to allow ESP32 to finish Serial output setup
 
-  if (GENERATE == STATIC){
-    createSineWaveData();
+    printSettings();
+
+    currentNode = createCircularLinkedList(SAMPLES_PER_CYCLE);
+
+    populateCircularLinkedList(currentNode);
+
+    delay(1000); //wait for any debug messages to print
+
+    setupCallbackTimer(); 
+
+    dac_output_enable(DAC_CHANNEL);
+
+  } catch (const std::exception &exc) {
+    Serial.println(exc.what());
   }
-
-  setupCallbackTimer();
-
-  dac_output_enable(DAC_CHANNEL);
 }
 
 /**
@@ -163,3 +215,4 @@ void loop(){
   //do nothing, since the timer and its callbacks to onTimer() handle ALL of the work 
   delay(60000);
 }
+
