@@ -21,28 +21,25 @@
  */
 
 #include <Arduino.h>
-#include "freertos/FreeRTOS.h"
-#include "esp_system.h"
 #include "driver/dac.h"
 #include "driver/timer.h"
 #include "clk.h"
-#include <stdlib.h>
 
 //Configurable items: specify the output frequency, sample rate, attenuation and DAC Channel
-#define FREQUENCY           197    // the desired frequency (Hz) of the output waveform
-#define SAMPLES_PER_SECOND  14000  // (140000 max) ADC samples per second. Per Nyquist, set this to be at least 2 x FREQUENCY
+#define FREQUENCY           500    // the desired frequency (Hz) of the output waveform
+#define SAMPLES_PER_SECOND  140000  // (140000 max) ADC samples per second. Per Nyquist, set this at least 2 x FREQUENCY
 #define ATTENUATION         1.0     // output waveform voltage attenuation (must be 1.0 or less)
 #define DAC_CHANNEL         DAC_CHANNEL_1 // the waveform output pin. (e.g., DAC_CHANNEL_1 or DAC_CHANNEL_2)
 
 //These items should probably be left as-is
+#define DAC_BIT_DEPTH       8       // ESP32: 8 bits (fixed within ESP32 hardware)
 #define DEBUG               false
-#define DAC_BIT_DEPTH       8       //ESP32: 8 bits, Arduino: 10 bits or 12 bits
  
 //Do NOT change the following 
 #define SAMPLES_PER_CYCLE   SAMPLES_PER_SECOND/FREQUENCY 
-#define MAX_DAC_VALUE       255     //the maximum ESP32 DAC value (8 bit DAC. this is fixed in the hardware)
-#define AMPLITUDE           127     //amplitude is half of peak-to-peak
-#define TIMER_DIVIDER       40      // timer frequency divider. timer runs at 80MHz by default. a divider of 2 means it runs at 40MHz. 
+#define MAX_DAC_VALUE       255     // (255) the maximum ESP32 DAC value, peak-to-peak (8 bit DAC fixed in hardware)
+#define AMPLITUDE           127     // (127) amplitude is half of peak-to-peak
+#define TIMER_DIVIDER       80      // (80) timer frequency divider. timer runs at 80MHz by default. 
 
 //the timer used to make callbacks to the onTimer() function
 hw_timer_t * timer = NULL;
@@ -112,7 +109,16 @@ struct node* createCircularLinkedList(int size) {
   return head;
 }
 
-// Function to populate a circular linked list with data from an array
+/**
+ * @brief Populates the given circular linked list with one complete cycle of sinusoid data
+ * 
+ * Since we know the SAMPLES_PER_CYCLE of the waveform, we'll put that many values into the linked list.
+ * The timer will call function onTimer() at the precise rate needed to produce the desired output frequency. 
+ * 
+ * @param head the start of the Populates the given circular linked list with one complete cycle of sinusoid data
+ * @return void
+ */
+ 
 void populateCircularLinkedList(struct node *head) {
   struct node *current = head;
 
@@ -134,13 +140,18 @@ void populateCircularLinkedList(struct node *head) {
 /** 
  * The function generates and outputs the sine wave to the DAC channel.
  * It is called periodically by the timer. The period depends on the SAMPLES_PER_SECOND.
+ * This function:
+ *  1) gets values of the waveform from the circular linked list
+ *  2) outputs the value to the DAC channel
+ *  3) advances the linked list to the next node 
 */
 void onTimer() {
-
+  // get the waveform value from the linked list
   int waveform_value = currentNode->data;
-  currentNode = currentNode->next;
   // output the voltage to the DAC_CHANNEL
   dac_output_voltage(DAC_CHANNEL, waveform_value);
+  // advance to the value in the linked list
+  currentNode = currentNode->next; 
 }
 
 /**
@@ -194,8 +205,6 @@ void setup() {
 
     populateCircularLinkedList(currentNode);
 
-    delay(1000); //wait for any debug messages to print
-
     setupCallbackTimer(); 
 
     dac_output_enable(DAC_CHANNEL);
@@ -213,4 +222,3 @@ void loop(){
   //do nothing, since the timer and its callbacks to onTimer() handle ALL of the work 
   delay(60000);
 }
-
