@@ -25,6 +25,13 @@
 #include "driver/timer.h"
 #include "clk.h"
 
+double frequencies[] = {440.0, 660.0, 880.0};  // frequencies of the sine waves
+double amplitudes[] = {0.5, 0.7, 0.4};    // amplitudes of the sine waves
+double phases[] = {0.0, M_PI / 4, M_PI / 2};  // phase angles of the sine waves in radians
+double decay = 0.99;          // decay coefficient
+unsigned int n = 3;           // number of sine waves
+unsigned double time;         // time variable
+
 //Configurable items: specify the output frequency, sample rate, attenuation and DAC Channel
 #define FREQUENCY           500    // the desired frequency (Hz) of the output waveform
 #define SAMPLES_PER_SECOND  140000  // (140000 max) ADC samples per second. Per Nyquist, set this at least 2 x FREQUENCY
@@ -222,3 +229,41 @@ void loop(){
   //do nothing, since the timer and its callbacks to onTimer() handle ALL of the work 
   delay(60000);
 }
+
+//============================================================================
+//============================================================================
+//============================================================================
+//============================================================================
+/*
+int onTimer2() {
+
+    double result;  // combined sine wave
+
+    for (time = 0; time <= 1.0; time += 0.01) {
+        result = 0;
+        for (int i = 0; i < n; i++) {
+            result += amplitudes[i] * sin(2 * M_PI * frequencies[i] * time + phases[i]);
+        }
+        result *= decay;  // apply exponential decay
+        printf("%.2f\n", result);
+    }
+
+    return 0;
+}
+
+  struct node *current = head;
+
+  for (int i = 0; i < SAMPLES_PER_CYCLE; i++) {
+    float angleInDegrees = ((float)i) * (360.0/((float)SAMPLES_PER_CYCLE));
+    float angleInRadians = 2.0 * PI * angleInDegrees / 360.0;
+    if (DEBUG){
+      Serial.println("i : degrees : radians " + String(i) + " : " + String(angleInDegrees) + " : " + String(angleInRadians));
+    }
+    long value = ATTENUATION * (AMPLITUDE + AMPLITUDE * sin(angleInRadians));
+    current->data = value;
+    current = current->next;
+  }
+  if (DEBUG){
+    printLinkedList();
+  }
+*/
