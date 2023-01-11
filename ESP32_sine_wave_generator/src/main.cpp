@@ -17,7 +17,7 @@
  * @author Philip Giacalone
  * @brief 
  * @version 0.1
- * @date 2023-01-08
+ * @date 2023-01-11
  */
 
 #include <Arduino.h>
@@ -26,9 +26,9 @@
 #include "clk.h"
 
 //Configurable items: specify the output frequency, sample rate, attenuation and DAC Channel
-#define FREQUENCY           500    // the desired frequency (Hz) of the output waveform
-#define SAMPLES_PER_SECOND  100000  // (140000 max) ADC samples per second. Per Nyquist, set this at least 2 x FREQUENCY
-#define ATTENUATION         1.0     // output waveform voltage attenuation (must be 1.0 or less)
+#define FREQUENCY           3000    // the desired frequency (Hz) of the output waveform
+#define SAMPLES_PER_SECOND  180000  // ADC samples per second. Per Nyquist, set this at least 2 x FREQUENCY
+#define ATTENUATION         0.8     // output waveform voltage attenuation (must be 1.0 or less)
 #define DAC_CHANNEL         DAC_CHANNEL_1 // the waveform output pin. (e.g., DAC_CHANNEL_1 or DAC_CHANNEL_2)
 
 //These items should probably be left as-is
@@ -40,6 +40,14 @@
 #define MAX_DAC_VALUE       255     // (255) the maximum ESP32 DAC value, peak-to-peak (8 bit DAC fixed in hardware)
 #define AMPLITUDE           127     // (127) amplitude is half of peak-to-peak
 #define TIMER_DIVIDER       80      // (80) timer frequency divider. timer runs at 80MHz by default. 
+
+//the array that will hold all of the digital waveform values
+int waveValues[SAMPLES_PER_CYCLE];
+//holds the current index to the waveValues array 
+int currentWaveSample = 0;
+
+unsigned long previousMillis = 0UL;
+unsigned long interval = 120000UL; //120 seconds
 
 //the timer used to make callbacks to the onTimer() function
 hw_timer_t * timer = NULL;
@@ -61,6 +69,7 @@ typedef struct {
 
 heap_info_t heap_info;
 
+//utility function
 void get_heap_info(heap_info_t *info)
 {
     info->free_heap = esp_get_free_heap_size();
@@ -68,6 +77,7 @@ void get_heap_info(heap_info_t *info)
     info->used_heap = info->free_heap - info->minimum_free_heap;
 }
 
+//utility function
 void printHeapInfo(){
   get_heap_info(&heap_info);
   Serial.println("------Heap Info------");
@@ -76,37 +86,14 @@ void printHeapInfo(){
   Serial.println("Used Heap        : " + String(heap_info.used_heap));
 }
 
-void printLinkedList(){
-  struct node *current = currentNode;
-  Serial.println("-----Linked List Contents-----");
-  do {
-    int value = current->data;
-    Serial.println(String(value));
-    current = current->next;
-  } while (current != currentNode);
-}
-
-// Function to create a circular linked list with a specified size
-struct node* createCircularLinkedList(int size) {
-  struct node *head, *current, *temp;
-
-  // Create the first node
-  head = (struct node*) malloc(sizeof(struct node));
-  head->data = 1;
-  current = head;
-
-  // Create the rest of the nodes
-  for (int i = 0; i < size-1; i++) {
-    temp = (struct node*) malloc(sizeof(struct node));
-    temp->data = i;
-    current->next = temp;
-    current = temp;
-  }
-
-  // Link the last node to the head to create the circular linked list
-  current->next = head;
-
-  return head;
+/** 
+ * Prints out the contents of the linked list 
+ */
+template <typename T, std::size_t N> 
+void printArray(const T (&arr)[N]) { 
+    for (std::size_t i = 0; i < N; i++) {
+        Serial.println(arr[i]);
+    }
 }
 
 /**
@@ -115,25 +102,22 @@ struct node* createCircularLinkedList(int size) {
  * Since we know the SAMPLES_PER_CYCLE of the waveform, we'll put that many values into the linked list.
  * The timer will call function onTimer() at the precise rate needed to produce the desired output frequency. 
  * 
- * @param head the start of the Populates the given circular linked list with one complete cycle of sinusoid data
+ * @param head pointer to the circular linked list to be populated with one complete cycle of sinusoid data
  * @return void
  */
- 
-void populateCircularLinkedList(struct node *head) {
-  struct node *current = head;
-
-  for (int i = 0; i < SAMPLES_PER_CYCLE; i++) {
+void populateWaveArray() {
+  int count = sizeof(waveValues) / sizeof(waveValues[0]);
+  for (int i = 0; i < count; i++) {
     float angleInDegrees = ((float)i) * (360.0/((float)SAMPLES_PER_CYCLE));
     float angleInRadians = 2.0 * PI * angleInDegrees / 360.0;
     if (DEBUG){
       Serial.println("i : degrees : radians " + String(i) + " : " + String(angleInDegrees) + " : " + String(angleInRadians));
     }
     long value = ATTENUATION * (AMPLITUDE + AMPLITUDE * sin(angleInRadians));
-    current->data = value;
-    current = current->next;
+    waveValues[i] = value;
   }
   if (DEBUG){
-    printLinkedList();
+    printArray(waveValues);
   }
 }
 
@@ -146,12 +130,16 @@ void populateCircularLinkedList(struct node *head) {
  *  3) advances the linked list to the next node 
 */
 void onTimer() {
+
   // get the waveform value from the linked list
-  int waveform_value = currentNode->data;
+  int waveform_value = waveValues[currentWaveSample];
   // output the voltage to the DAC_CHANNEL
   dac_output_voltage(DAC_CHANNEL, waveform_value);
-  // advance to the value in the linked list
-  currentNode = currentNode->next; 
+  // advance the index or reset to zero
+  currentWaveSample++;
+  if (currentWaveSample >= SAMPLES_PER_CYCLE){
+    currentWaveSample = 0;
+  } 
 }
 
 /**
@@ -193,19 +181,19 @@ void printSettings(){
   Serial.println();
 }
 
-// void checkConfig(){
-//   if (FREQUENCY < 0.0){
-//     throw "ERROR: checkConfig() FREQUENCY must be positive. Found FREQUENCY=" + String(FREQUENCY);
-//   }
+void checkConfig(){
+  if (FREQUENCY < 0.0){
+    throw "ERROR: checkConfig() FREQUENCY must be positive. Found FREQUENCY=" + String(FREQUENCY);
+  }
 
-//   if (SAMPLES_PER_SECOND < 0.0){
-//     throw "ERROR: checkConfig() SAMPLES_PER_SECOND must be positive. Found SAMPLES_PER_SECOND=" + String(FREQUENCY);
-//   }
+  if (SAMPLES_PER_SECOND < 0.0){
+    throw "ERROR: checkConfig() SAMPLES_PER_SECOND must be positive. Found SAMPLES_PER_SECOND=" + String(FREQUENCY);
+  }
 
-//   if (ATTENUATION > 1.0 || ATTENUATION < 0.0){
-//     throw "ERROR: checkConfig() ATTENUATION must be positive and <= 1. Found ATTENUATION=" + String(ATTENUATION);
-//   }
-// }
+  if (ATTENUATION > 1.0 || ATTENUATION < 0.0){
+    throw "ERROR: checkConfig() ATTENUATION must be positive and <= 1. Found ATTENUATION=" + String(ATTENUATION);
+  }
+}
 
 void setup() {
   try {
@@ -215,11 +203,9 @@ void setup() {
 
     printSettings();
 
-//    checkConfig();
+    checkConfig();
 
-    currentNode = createCircularLinkedList(SAMPLES_PER_CYCLE);
-
-    populateCircularLinkedList(currentNode);
+    populateWaveArray();
 
     dac_output_enable(DAC_CHANNEL); //do this before setupCallbackTimer() so the output channel is ready
 
@@ -229,6 +215,18 @@ void setup() {
     Serial.println(exc.what());
   }
 }
+
+// /**
+//  * @brief Does nothing, since all the work is handled by the timer and onTimer()
+//  */
+// void loop()
+// {
+//   unsigned long currentMillis = millis();
+//   if(currentMillis - previousMillis > interval)
+//   {
+//    	previousMillis = currentMillis;
+//   }
+// }
 
 /**
  * @brief Does nothing, since all the work is handled by the timer and onTimer()
