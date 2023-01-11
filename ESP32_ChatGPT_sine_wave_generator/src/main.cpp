@@ -205,9 +205,9 @@ void setup() {
 
     populateCircularLinkedList(currentNode);
 
-    setupCallbackTimer(); 
+    dac_output_enable(DAC_CHANNEL); //do this before setupCallbackTimer() so the output channel is ready
 
-    dac_output_enable(DAC_CHANNEL);
+    setupCallbackTimer(); 
 
   } catch (const std::exception &exc) {
     Serial.println(exc.what());

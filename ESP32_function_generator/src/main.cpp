@@ -25,28 +25,33 @@
 #include "driver/timer.h"
 #include "clk.h"
 
-double frequencies[] = {440.0, 660.0, 880.0};  // frequencies of the sine waves
-double amplitudes[] = {0.5, 0.7, 0.4};    // amplitudes of the sine waves
-double phases[] = {0.0, M_PI / 4, M_PI / 2};  // phase angles of the sine waves in radians
-double decay = 0.99;          // decay coefficient
-unsigned int n = 3;           // number of sine waves
-unsigned double time;         // time variable
-
 //Configurable items: specify the output frequency, sample rate, attenuation and DAC Channel
-#define FREQUENCY           500    // the desired frequency (Hz) of the output waveform
-#define SAMPLES_PER_SECOND  140000  // (140000 max) ADC samples per second. Per Nyquist, set this at least 2 x FREQUENCY
+#define FREQUENCY           10    // the desired frequency (Hz) of the output waveform
+#define SAMPLES_PER_SECOND  1000  // (140000 max) ADC samples per second. Per Nyquist, set this at least 2 x FREQUENCY
 #define ATTENUATION         1.0     // output waveform voltage attenuation (must be 1.0 or less)
 #define DAC_CHANNEL         DAC_CHANNEL_1 // the waveform output pin. (e.g., DAC_CHANNEL_1 or DAC_CHANNEL_2)
-
-//These items should probably be left as-is
 #define DAC_BIT_DEPTH       8       // ESP32: 8 bits (fixed within ESP32 hardware)
-#define DEBUG               false
- 
+#define DEBUG               true
+#define STATIC              0
+#define DYNAMIC             1
+#define GENERATE_WAVES      DYNAMIC 
+
 //Do NOT change the following 
 #define SAMPLES_PER_CYCLE   SAMPLES_PER_SECOND/FREQUENCY 
-#define MAX_DAC_VALUE       255     // (255) the maximum ESP32 DAC value, peak-to-peak (8 bit DAC fixed in hardware)
-#define AMPLITUDE           127     // (127) amplitude is half of peak-to-peak
+#define DAC_PEAK_TO_PEAK    255     // (255) the maximum ESP32 DAC value, peak-to-peak (8 bit DAC fixed in hardware)
+#define DAC_AMPLITUDE       127     // (127) amplitude is half of peak-to-peak
 #define TIMER_DIVIDER       80      // (80) timer frequency divider. timer runs at 80MHz by default. 
+
+float frequencies[] = {10.0, 100.0};   // Hz, frequencies of the sine waves
+float amplitudes[] = {1.0, 0.1};       // amplitudes of the sine waves (range is from 0.0 to 1.0)
+float phases[] = {0.0, PI/4.0};      //       radians, phase angles of the sine waves in radians
+float decay = 0.99;          // decay coefficient
+
+//the following are 
+uint64_t now = 0;            // microseconds. keeps track of the time, when dynamically generating the waveforms
+uint64_t sampleCount = 0;      // keeps track of time steps, when dynamically generating the waveforms
+int numberOfWaves = sizeof(frequencies);  // set automatically at runtime. 
+int MICROSECONDS_PER_SAMPLE = 0;    //set automatically at runtime.
 
 //the timer used to make callbacks to the onTimer() function
 hw_timer_t * timer = NULL;
@@ -67,6 +72,12 @@ typedef struct {
 } heap_info_t;
 
 heap_info_t heap_info;
+
+void debug(String s){
+  if (DEBUG) {
+    Serial.println(s);
+  }
+}
 
 void get_heap_info(heap_info_t *info)
 {
@@ -95,6 +106,8 @@ void printLinkedList(){
 
 // Function to create a circular linked list with a specified size
 struct node* createCircularLinkedList(int size) {
+  debug("Start createCircularLinkedList()");
+
   struct node *head, *current, *temp;
 
   // Create the first node
@@ -113,6 +126,8 @@ struct node* createCircularLinkedList(int size) {
   // Link the last node to the head to create the circular linked list
   current->next = head;
 
+  debug("Finished createCircularLinkedList()");
+
   return head;
 }
 
@@ -127,6 +142,9 @@ struct node* createCircularLinkedList(int size) {
  */
  
 void populateCircularLinkedList(struct node *head) {
+
+  debug("Start populateCircularLinkedList()");
+
   struct node *current = head;
 
   for (int i = 0; i < SAMPLES_PER_CYCLE; i++) {
@@ -135,13 +153,14 @@ void populateCircularLinkedList(struct node *head) {
     if (DEBUG){
       Serial.println("i : degrees : radians " + String(i) + " : " + String(angleInDegrees) + " : " + String(angleInRadians));
     }
-    long value = ATTENUATION * (AMPLITUDE + AMPLITUDE * sin(angleInRadians));
+    long value = ATTENUATION * (DAC_AMPLITUDE + DAC_AMPLITUDE * sin(angleInRadians));
     current->data = value;
     current = current->next;
   }
   if (DEBUG){
     printLinkedList();
   }
+  debug("Finished populateCircularLinkedList()");
 }
 
 /** 
@@ -153,12 +172,39 @@ void populateCircularLinkedList(struct node *head) {
  *  3) advances the linked list to the next node 
 */
 void onTimer() {
-  // get the waveform value from the linked list
-  int waveform_value = currentNode->data;
-  // output the voltage to the DAC_CHANNEL
-  dac_output_voltage(DAC_CHANNEL, waveform_value);
-  // advance to the value in the linked list
-  currentNode = currentNode->next; 
+
+  int waveform_value = 0;
+
+  if (GENERATE_WAVES == STATIC){ //------STATIC GENERATION OF WAVEFORMS------
+
+    // get the waveform value from the linked list (value of 0 to 255)
+    waveform_value = currentNode->data;
+    // output the voltage to the DAC_CHANNEL
+    dac_output_voltage(DAC_CHANNEL, waveform_value);
+    // advance to the value in the linked list
+    currentNode = currentNode->next; 
+
+  } else { //------DYNAMIC GENERATION OF WAVEFORMS------
+
+    now = sampleCount * MICROSECONDS_PER_SAMPLE / 1000000; //seconds since start
+
+    for (int i=0; i<numberOfWaves; i++){
+
+      float omega_t = TWO_PI * frequencies[i] * ((float)now);
+      float phi = phases[i];  //already in radians
+      // formula for a sine wave with frequency (ω) amplitude (A) and phase angle (φ)
+      // f(t) = A sin(ωt + φ)
+      float sine_value = sin(omega_t + phi);
+
+      float single_wave_value = amplitudes[i] * sine_value;
+      //waveform_value ranges from 0 to 255
+      waveform_value = waveform_value + (ATTENUATION * (DAC_AMPLITUDE + (DAC_AMPLITUDE * single_wave_value))); //<--bug
+
+    } //end for
+    dac_output_voltage(DAC_CHANNEL, waveform_value);
+    sampleCount++;
+
+  } //end else
 }
 
 /**
@@ -166,18 +212,20 @@ void onTimer() {
  * The frequency of the callbacks is determined by the SAMPLES_PER_SECOND.
  */
 void setupCallbackTimer() {
+  debug("Begin setupCallbackTimer()");
   // set up timer 0 to generate a callback to onTimer() every 1 microsecond
   int timer_id = 0; //the ESP32 has several timers. Just use 0. 
   boolean countUp = true;
 
   long MICROSECONDS_PER_SECOND = 1000000; //the timer has a resolution of 1 microsecond (nice!) 
-  long MICROSECONDS_PER_SAMPLE = MICROSECONDS_PER_SECOND / SAMPLES_PER_SECOND;
+  MICROSECONDS_PER_SAMPLE = MICROSECONDS_PER_SECOND / SAMPLES_PER_SECOND; //sets the global variable
 
   timer = timerBegin(timer_id, TIMER_DIVIDER, countUp);
   timerAttachInterrupt(timer, &onTimer, true);
   //timerAlarmWrite() sets up callbacks with a resolution of microseconds
   timerAlarmWrite(timer, MICROSECONDS_PER_SAMPLE, true);
   timerAlarmEnable(timer);
+//  debug("Finished setupCallbackTimer()");
 }
 
 /**
@@ -185,11 +233,19 @@ void setupCallbackTimer() {
  * 
  */
 void printSettings(){
+  debug("Start printSettings()");
+
   Serial.println();
   Serial.println();
   Serial.println("=======================================================");  
+  if (GENERATE_WAVES == STATIC){
+    Serial.println("Generate         : STATIC waveform data");
+  } else {
+    Serial.println("Generate         : DYNAMIC waveform data");
+  }
   Serial.println("Frequency        : " + String(FREQUENCY) + " Hz");
   Serial.println("Sample Rate      : " + String(SAMPLES_PER_SECOND) + " samples per second");
+  Serial.println("Attenuation      : " + String(ATTENUATION));
   Serial.println("Samples Per Cycle: " + String(SAMPLES_PER_CYCLE) + " samples per cycle");
   uint32_t clock_speed = esp_clk_cpu_freq() / 1000000;  //MHz  
   Serial.println("Clock_Speed      : " + String(clock_speed) + " MHz");
@@ -198,9 +254,24 @@ void printSettings(){
 
   Serial.println("=======================================================");
   Serial.println();
+
+  debug("Finished printSettings()");
+}
+
+void checkInputs(){
+  debug("Start checkInputs()");
+  if (sizeof(frequencies) != sizeof(amplitudes) || sizeof(frequencies) != sizeof(phases)){
+    throw std::runtime_error("CONFIGURATION ERROR: The size of the 3 input arrays must be equal (frequencies, amplitudes and phases)");
+  }
+  numberOfWaves = sizeof(frequencies);
+  if (GENERATE_WAVES == DYNAMIC && numberOfWaves == 0){
+    throw std::runtime_error("CONFIGURATION ERROR: DYNAMIC waveform generation specified but number of waveforms is zero");
+  }
+  debug("Finished checkInputs()");
 }
 
 void setup() {
+  debug("Start setup()");
   try {
 
     Serial.begin(115200); 
@@ -208,17 +279,25 @@ void setup() {
 
     printSettings();
 
-    currentNode = createCircularLinkedList(SAMPLES_PER_CYCLE);
+    checkInputs();
 
-    populateCircularLinkedList(currentNode);
-
-    setupCallbackTimer(); 
+    if (GENERATE_WAVES == STATIC){
+      //statically generate all the waveform values
+      currentNode = createCircularLinkedList(SAMPLES_PER_CYCLE);
+      populateCircularLinkedList(currentNode);
+    } else {
+      //we'll dynamically generating the waveform
+    }
 
     dac_output_enable(DAC_CHANNEL);
 
+    setupCallbackTimer(); 
+
+    debug("Finished setup()");
+
   } catch (const std::exception &exc) {
     Serial.println(exc.what());
-  }
+  } 
 }
 
 /**
@@ -229,6 +308,7 @@ void loop(){
   //do nothing, since the timer and its callbacks to onTimer() handle ALL of the work 
   delay(60000);
 }
+
 
 //============================================================================
 //============================================================================
@@ -259,7 +339,7 @@ int onTimer2() {
     if (DEBUG){
       Serial.println("i : degrees : radians " + String(i) + " : " + String(angleInDegrees) + " : " + String(angleInRadians));
     }
-    long value = ATTENUATION * (AMPLITUDE + AMPLITUDE * sin(angleInRadians));
+    long value = ATTENUATION * (DAC_AMPLITUDE + DAC_AMPLITUDE * sin(angleInRadians));
     current->data = value;
     current = current->next;
   }
