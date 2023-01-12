@@ -1,6 +1,27 @@
-#include "driver/dma.h"
+/*
+ChatGPT generated code and comments
+Not tested, since I cannot find a required libary
+
+---- Unable to find driver/dma.h -----
+ 
+In this example, the DMA controller is configured to transfer 1 byte of data from memory to memory in a loop. The callback function "onDMATimer()" is assigned to the DMA transfer.
+
+The timer is configured with a divider of 80, which means that the timer's base clock is 80 MHz and the timer's counter increments every 12.5 ns. The timer is set to generate an alarm every 100 microseconds (0.0001 seconds) and the alarm signal is used to trigger the DMA transfer.
+
+The interrupt for the timer is enabled, and allocated using esp_intr_alloc(). The DMA transfer is started using the dma_start() function and the timer is started using the timer_start() function.
+
+It's important to note that this example is just a skeleton of the code and it is missing important parts such as the memory allocation for DMA, and the destruction of resources, also you should consider the fact that the ESP32's DMA controller has multiple channels that can be used for different purpose, you should make sure that the channel you are using is not being used by other peripherals.
+
+Additionally, this example makes use of the printf function, for which the UART driver should be correctly configured in the ESP32.
+*/
+
+//#include "driver/dma.h"
 #include "driver/timer.h"
 #include "esp_intr_alloc.h"
+#include "freertos/timers.h"
+#include <stdio.h>
+#include "esp_log.h"
+#include "freertos/timers.h"
 
 #define DMA_CHANNEL 1
 #define TIMER_GROUP TIMER_GROUP_0

@@ -1,5 +1,13 @@
 /**
+ * Philip Giacalone 01/11/2023
+ * 
  * Code for the ESP32 that outputs a sine wave via a DAC channel. 
+ * 
+ * This implementation uses an array rather than a circular linked list
+ * to hold the static values of a single cycle of the sine wave. This
+ * implementation is faster than the linked list, allowing for a sample
+ * rate up to ~188,000 samples/sec (yielding ~5.3 microseconds per step). 
+ * 
  * 
  * Note on a waveform's amplitude vs its peak-to-peak value:
  * 
@@ -26,8 +34,8 @@
 #include "clk.h"
 
 //Configurable items: specify the output frequency, sample rate, attenuation and DAC Channel
-#define FREQUENCY           30000    // the desired frequency (Hz) of the output waveform
-#define SAMPLES_PER_SECOND  180000  // ADC samples per second. Per Nyquist, set this at least 2 x FREQUENCY
+#define FREQUENCY           3000    // the desired frequency (Hz) of the output waveform
+#define SAMPLES_PER_SECOND  200000  // (180000 max) ADC samples per second. Per Nyquist, set this at least 2 x FREQUENCY
 #define ATTENUATION         0.8     // output waveform voltage attenuation (must be 1.0 or less)
 #define DAC_CHANNEL         DAC_CHANNEL_1 // the waveform output pin. (e.g., DAC_CHANNEL_1 or DAC_CHANNEL_2)
 
@@ -41,6 +49,10 @@
 #define MAX_DAC_AMPLITUDE   127     // (127) amplitude is half of peak-to-peak
 #define TIMER_DIVIDER       80      // (80) timer frequency divider. timer runs at 80MHz by default. 
 
+double MICROSECONDS_PER_SAMPLE = 0.0;  //set automatically at runtime.
+double SECONDS_PER_SAMPLE = 0.0;       //set automatically at runtime.
+const double MICROSECONDS_PER_SECOND = 1000000.0; //the timer has a resolution of 1 microsecond (nice!) 
+
 //the array that will hold all of the digital waveform values
 int waveValues[SAMPLES_PER_CYCLE];
 //holds the current index to the waveValues array 
@@ -51,14 +63,6 @@ unsigned long interval = 120000UL; //120 seconds
 
 //the timer used to make callbacks to the onTimer() function
 hw_timer_t * timer = NULL;
-
-// Node structure for a circular linked list.
-// This will hold the waveform values for one complete cycle.
-struct node {
-  int data;
-  struct node *next;
-};
-struct node* currentNode;
 
 // memory information struct
 typedef struct {
@@ -87,7 +91,7 @@ void printHeapInfo(){
 }
 
 /** 
- * Prints out the contents of the linked list 
+ * Prints out the contents of the array 
  */
 template <typename T, std::size_t N> 
 void printArray(const T (&arr)[N]) { 
@@ -97,12 +101,13 @@ void printArray(const T (&arr)[N]) {
 }
 
 /**
- * @brief Populates the given circular linked list with one complete cycle of sinusoid data
+ * @brief Populates the given array with one complete cycle of sinusoid data
  * 
- * Since we know the SAMPLES_PER_CYCLE of the waveform, we'll put that many values into the linked list.
- * The timer will call function onTimer() at the precise rate needed to produce the desired output frequency. 
+ * Since we know the SAMPLES_PER_CYCLE of the waveform, we'll put that many values into the array.
+ * The timer will call function onTimer() at the precise rate needed to produce the desired 
+ * output frequency. 
  * 
- * @param head pointer to the circular linked list to be populated with one complete cycle of sinusoid data
+ * @param 
  * @return void
  */
 void populateWaveArray() {
@@ -125,17 +130,17 @@ void populateWaveArray() {
  * The function generates and outputs the sine wave to the DAC channel.
  * It is called periodically by the timer. 
  * This function:
- *  1) gets values of the waveform from the circular linked list
+ *  1) gets a value of the waveform from an array (one sample step's value)
  *  2) outputs the value to the DAC channel
- *  3) advances the linked list to the next node 
+ *  3) advances the array index or resets it to zero (the sample's step number) 
 */
 void onTimer() {
 
-  // get the waveform value from the linked list
+  // get the waveform value from the array
   int waveform_value = waveValues[currentWaveSample];
   // output the voltage to the DAC_CHANNEL
   dac_output_voltage(DAC_CHANNEL, waveform_value);
-  // advance the index or reset to zero
+  // advance the array index or reset to zero
   currentWaveSample++;
   if (currentWaveSample >= SAMPLES_PER_CYCLE){
     currentWaveSample = 0;
@@ -147,12 +152,8 @@ void onTimer() {
  * The frequency of the callbacks is determined by the SAMPLES_PER_SECOND.
  */
 void setupCallbackTimer() {
-  // set up timer 0 to generate a callback to onTimer() every 1 microsecond
   int timer_id = 0; //the ESP32 has several timers. Just use 0. 
   boolean countUp = true;
-
-  long MICROSECONDS_PER_SECOND = 1000000; //the timer has a resolution of 1 microsecond (nice!) 
-  long MICROSECONDS_PER_SAMPLE = MICROSECONDS_PER_SECOND / SAMPLES_PER_SECOND;
 
   timer = timerBegin(timer_id, TIMER_DIVIDER, countUp);
   timerAttachInterrupt(timer, &onTimer, true);
@@ -169,11 +170,17 @@ void printSettings(){
   Serial.println();
   Serial.println();
   Serial.println("=======================================================");  
-  Serial.println("Frequency        : " + String(FREQUENCY) + " Hz");
-  Serial.println("Sample Rate      : " + String(SAMPLES_PER_SECOND) + " samples per second");
-  Serial.println("Samples Per Cycle: " + String(SAMPLES_PER_CYCLE) + " samples per cycle");
+  Serial.println("Frequency            : " + String(FREQUENCY) + " Hz");
+  Serial.println("Sample Rate          : " + String(SAMPLES_PER_SECOND) + " samples per second");
+  Serial.println("Samples Per Cycle    : " + String(SAMPLES_PER_CYCLE) + " samples per cycle");
+  Serial.printf( "Seconds Per Sample   : %.8lf seconds \n", SECONDS_PER_SAMPLE);
+  Serial.printf( "Microsecs Per Sample : %.3lf usec \n", MICROSECONDS_PER_SAMPLE);
+
+  int apb_freq = esp_clk_apb_freq();
+  Serial.printf( "APB Timer Period     : %.3lf usec\n", apb_freq);
+
   uint32_t clock_speed = esp_clk_cpu_freq() / 1000000;  //MHz  
-  Serial.println("Clock_Speed      : " + String(clock_speed) + " MHz");
+  Serial.println("Clock_Speed          : " + String(clock_speed) + " MHz");
 
   printHeapInfo();
 
@@ -200,11 +207,15 @@ void checkConfig(){
     throw msg;
   }
 }
+
 void setup() {
   try {
 
     Serial.begin(115200); 
     delay(500); //a short delay to allow ESP32 to finish Serial output setup
+
+    MICROSECONDS_PER_SAMPLE = MICROSECONDS_PER_SECOND / SAMPLES_PER_SECOND;
+    SECONDS_PER_SAMPLE = MICROSECONDS_PER_SAMPLE / 1000000;
 
     printSettings();
 

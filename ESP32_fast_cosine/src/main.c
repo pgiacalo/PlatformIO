@@ -30,9 +30,8 @@ DAC Cosine Generator Example
 //increasing clk_8m_div reduces the output frequency
 int clk_8m_div = 0;      // RTC 8M clock divider (division is by clk_8m_div+1, i.e. 0 means 8MHz frequency)
 
-// frequency_step = 8 //original value 
 // frequency_step: 8=1024 Hz, 800=10240 kHz, 1600=207520 (poor waveform shape)
-int frequency_step = 8;  // Frequency step for CW generator
+int frequency_step = 1600;  // Frequency step for cosine generator
 
 int scale = 1;           // 50% of the full scale
 int offset;              // leave it default / 0 = no any offset

@@ -43,12 +43,12 @@
 
 //Configurable items: specify the output frequency, sample rate, attenuation and DAC Channel
 #define FREQUENCY           4400    // the desired frequency (Hz) of the output waveform
-#define SAMPLES_PER_SECOND  100000  // ADC samples per second. Per Nyquist, set this at least 2 x FREQUENCY
+#define SAMPLES_PER_SECOND  1000  // ADC samples per second. Per Nyquist, set this at least 2 x FREQUENCY
 #define ATTENUATION         0.5     // output waveform voltage attenuation (must be 1.0 or less)
 #define DAC_CHANNEL         DAC_CHANNEL_1 // the waveform output pin. (e.g., DAC_CHANNEL_1 or DAC_CHANNEL_2)
 #define STATIC              0
 #define DYNAMIC             1
-#define GENERATE_WAVES      STATIC 
+#define GENERATE_WAVES      DYNAMIC 
 
 double frequencies[] = {100.0};   // Hz, frequencies of the sine waves
 double amplitudes[] = {0.5};       // amplitudes of the sine waves (range is from 0.0 to 1.0)
@@ -268,11 +268,11 @@ void printSettings(){
   Serial.println("Frequency            : " + String(FREQUENCY) + " Hz");
   Serial.println("Sample Rate          : " + String(SAMPLES_PER_SECOND) + " samples per second");
   Serial.println("Samples Per Cycle    : " + String(SAMPLES_PER_CYCLE) + " samples per cycle");
-  Serial.printf( "Seconds Per Sample   : %.8lf usec \n", SECONDS_PER_SAMPLE);
-  Serial.println("Microsecs Per Sample : " + String(MICROSECONDS_PER_SAMPLE) + " usec");
-  int apb_freq = esp_clk_apb_freq();
-  Serial.printf( "APB Timer Frequency  : %.8lf\n", esp_clk_apb_freq);
+  Serial.printf( "Seconds Per Sample   : %.8lf seconds \n", SECONDS_PER_SAMPLE);
+  Serial.printf( "Microsecs Per Sample : %.3lf usec \n", MICROSECONDS_PER_SAMPLE);
 
+  int apb_freq = esp_clk_apb_freq();
+  Serial.printf( "APB Timer Period     : %.3lf usec\n", apb_freq);
 
   uint32_t clock_speed = esp_clk_cpu_freq() / 1000000;  //MHz  
   Serial.println("Clock_Speed          : " + String(clock_speed) + " MHz");
