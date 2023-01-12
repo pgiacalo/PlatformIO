@@ -26,7 +26,7 @@
 #include "clk.h"
 
 //Configurable items: specify the output frequency, sample rate, attenuation and DAC Channel
-#define FREQUENCY           3000    // the desired frequency (Hz) of the output waveform
+#define FREQUENCY           30000    // the desired frequency (Hz) of the output waveform
 #define SAMPLES_PER_SECOND  180000  // ADC samples per second. Per Nyquist, set this at least 2 x FREQUENCY
 #define ATTENUATION         0.8     // output waveform voltage attenuation (must be 1.0 or less)
 #define DAC_CHANNEL         DAC_CHANNEL_1 // the waveform output pin. (e.g., DAC_CHANNEL_1 or DAC_CHANNEL_2)
@@ -38,7 +38,7 @@
 //Do NOT change the following 
 #define SAMPLES_PER_CYCLE   SAMPLES_PER_SECOND/FREQUENCY 
 #define MAX_DAC_VALUE       255     // (255) the maximum ESP32 DAC value, peak-to-peak (8 bit DAC fixed in hardware)
-#define AMPLITUDE           127     // (127) amplitude is half of peak-to-peak
+#define MAX_DAC_AMPLITUDE   127     // (127) amplitude is half of peak-to-peak
 #define TIMER_DIVIDER       80      // (80) timer frequency divider. timer runs at 80MHz by default. 
 
 //the array that will hold all of the digital waveform values
@@ -113,7 +113,7 @@ void populateWaveArray() {
     if (DEBUG){
       Serial.println("i : degrees : radians " + String(i) + " : " + String(angleInDegrees) + " : " + String(angleInRadians));
     }
-    long value = ATTENUATION * (AMPLITUDE + AMPLITUDE * sin(angleInRadians));
+    long value = ATTENUATION * (MAX_DAC_AMPLITUDE + MAX_DAC_AMPLITUDE * sin(angleInRadians));
     waveValues[i] = value;
   }
   if (DEBUG){
@@ -183,18 +183,23 @@ void printSettings(){
 
 void checkConfig(){
   if (FREQUENCY < 0.0){
-    throw "ERROR: checkConfig() FREQUENCY must be positive. Found FREQUENCY=" + String(FREQUENCY);
+    String msg = "ERROR: checkConfig() FREQUENCY value must be positive. Found FREQUENCY=" + String(FREQUENCY);
+    Serial.println(msg);
+    throw msg;
   }
 
   if (SAMPLES_PER_SECOND < 0.0){
-    throw "ERROR: checkConfig() SAMPLES_PER_SECOND must be positive. Found SAMPLES_PER_SECOND=" + String(FREQUENCY);
+    String msg = "ERROR: checkConfig() SAMPLES_PER_SECOND value must be positive. Found SAMPLES_PER_SECOND=" + String(FREQUENCY);
+    Serial.println(msg);
+    throw msg;
   }
 
   if (ATTENUATION > 1.0 || ATTENUATION < 0.0){
-    throw "ERROR: checkConfig() ATTENUATION must be positive and <= 1. Found ATTENUATION=" + String(ATTENUATION);
+    String msg = "ERROR: checkConfig() ATTENUATION value must be between zero and one. Found ATTENUATION=" + String(ATTENUATION);
+    Serial.println(msg);
+    throw msg;
   }
 }
-
 void setup() {
   try {
 

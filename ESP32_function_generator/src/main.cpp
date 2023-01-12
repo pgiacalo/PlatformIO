@@ -1,6 +1,15 @@
 /**
  * Code for the ESP32 that outputs a sine wave via a DAC channel. 
  * 
+ * Espressif ESP32-WROOM-32D
+ * -------------------------
+ * Chip is ESP32-D0WD-V3 (revision v3.0) 
+ * Features: WiFi, BT, Dual Core, 240MHz, VRef calibration in efuse, Coding Scheme None
+ * Crystal is 40MHz
+ * --------
+ * See the notes posted at the bottom of this file for information about improving the performance
+ * of this code. 
+ * --------
  * Note on a waveform's amplitude vs its peak-to-peak value:
  * 
  * In mathematics, the amplitude of a sine wave is typically defined as the 
@@ -12,60 +21,67 @@
  * 
  * The peak-to-peak value of a waveform is the difference between the maximum 
  * and minimum values of the waveform, so it is twice the amplitude. 
+ * --------
  * 
  * @file main.cpp
  * @author Philip Giacalone
  * @brief 
  * @version 0.1
- * @date 2023-01-08
+ * @date 2023-01-11
  */
 
 #include <Arduino.h>
 #include "driver/dac.h"
 #include "driver/timer.h"
 #include "clk.h"
+#include "stdio.h"
 
-// #ifdef GENERATE_WAVES
-//     #if GENERATE_WAVES == STATIC
-//             // code to include 
-//     #else
-//     #if GENERATE_WAVES == DYNAMIC
-//             // code to include 
-//         #endif
-//     #endif
-// #endif
+// If using the FreeRTOS timer (which is faster than the built-in timer peripherals)
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/timers.h"
 
 //Configurable items: specify the output frequency, sample rate, attenuation and DAC Channel
-#define FREQUENCY           100    // the desired frequency (Hz) of the output waveform
-#define SAMPLES_PER_SECOND  10000  // (140000 max) ADC samples per second. Per Nyquist, set this at least 2 x FREQUENCY
-#define ATTENUATION         1.0     // output waveform voltage attenuation (must be 1.0 or less)
+#define FREQUENCY           4400    // the desired frequency (Hz) of the output waveform
+#define SAMPLES_PER_SECOND  100000  // ADC samples per second. Per Nyquist, set this at least 2 x FREQUENCY
+#define ATTENUATION         0.5     // output waveform voltage attenuation (must be 1.0 or less)
 #define DAC_CHANNEL         DAC_CHANNEL_1 // the waveform output pin. (e.g., DAC_CHANNEL_1 or DAC_CHANNEL_2)
-#define DAC_BIT_DEPTH       8       // ESP32: 8 bits (fixed within ESP32 hardware)
-#define DEBUG               false
 #define STATIC              0
 #define DYNAMIC             1
 #define GENERATE_WAVES      STATIC 
 
-float frequencies[] = {5.0, 1.0};   // Hz, frequencies of the sine waves
-float amplitudes[] = {0.5, 0.1};       // amplitudes of the sine waves (range is from 0.0 to 1.0)
-float phases[] = {0.0, PI/4.0};      //{0.0, PI/4.0}     radians, phase angles of the sine waves in radians
-float decay = 0.99;          // decay coefficient
+double frequencies[] = {100.0};   // Hz, frequencies of the sine waves
+double amplitudes[] = {0.5};       // amplitudes of the sine waves (range is from 0.0 to 1.0)
+double phases[] = {0.0};      //{0.0, PI/4.0}     radians, phase angles of the sine waves in radians
+double decay = 0.99;          // decay coefficient
 
+//These items should probably be left as-is
+#define DAC_BIT_DEPTH       8       // ESP32: 8 bits (fixed within ESP32 hardware)
+#define DEBUG               false
+ 
 //Do NOT change the following 
 #define SAMPLES_PER_CYCLE   SAMPLES_PER_SECOND/FREQUENCY 
-#define DAC_PEAK_TO_PEAK    255     // (255) the maximum ESP32 DAC value, peak-to-peak (8 bit DAC fixed in hardware)
-#define DAC_AMPLITUDE       127     // (127) amplitude is half of peak-to-peak
+#define MAX_DAC_VALUE       255     // (255) the maximum ESP32 DAC value, peak-to-peak (8 bit DAC fixed in hardware)
+#define MAX_DAC_AMPLITUDE   127     // (127) amplitude is half of peak-to-peak
 #define TIMER_DIVIDER       80      // (80) timer frequency divider. timer runs at 80MHz by default. 
 
 //the following are set by the system at runtime
-double now = 0;               // seconds. keeps track of the time, when dynamically generating the waveforms
-long long sampleCount = 0;       // keeps track of time steps, when dynamically generating the waveforms
-int numberOfWaves = 0;  // set automatically at runtime. 
-int MICROSECONDS_PER_SAMPLE = 0;    //set automatically at runtime.
+double now = 0.0;                     // seconds. keeps track of the time (time since start-up in seconds)
+double sampleCount = 0.0;               // keeps track of time steps, when dynamically generating the waveforms
+int numberOfWaves = 0;              // set automatically at runtime. 
+double MICROSECONDS_PER_SAMPLE = 0.0;  //set automatically at runtime.
+double SECONDS_PER_SAMPLE = 0.0;       //set automatically at runtime.
+const double MICROSECONDS_PER_SECOND = 1000000.0; //the timer has a resolution of 1 microsecond (nice!) 
 
-const long MICROSECONDS_PER_SECOND = 1000000; //the timer has a resolution of 1 microsecond (nice!) 
-const unsigned long interval = 120000UL; //120 seconds
+//the array that will hold all of the digital waveform values
+int waveValues[SAMPLES_PER_CYCLE];
+//holds the current index to the waveValues array 
+int waveSampleIndex = 0;
+
+int dynamic_value = 0;  //TODO remove eventually. just for testing DYNAMIC.
+
 unsigned long previousMillis = 0UL;
+unsigned long interval = 120000UL; //120 seconds
 
 //the timer used to make callbacks to the onTimer() function
 hw_timer_t * timer = NULL;
@@ -84,21 +100,10 @@ typedef struct {
     size_t minimum_free_heap;
     size_t used_heap;
 } heap_info_t;
+
 heap_info_t heap_info;
 
-template <typename T> 
-void debug(T value) {
-  if (DEBUG){
-    Serial.println(String(value));
-  }
-}
-
-/* Helper function to get the count of elements in an array */
-template<typename T, size_t N>
-int countElements(T (&array)[N]) {
-    return N;
-}
-
+//utility function
 void get_heap_info(heap_info_t *info)
 {
     info->free_heap = esp_get_free_heap_size();
@@ -106,49 +111,23 @@ void get_heap_info(heap_info_t *info)
     info->used_heap = info->free_heap - info->minimum_free_heap;
 }
 
+//utility function
 void printHeapInfo(){
   get_heap_info(&heap_info);
   Serial.println("------Heap Info------");
-  Serial.println("Free heap          : " + String(heap_info.free_heap));
-  Serial.println("Min Free heap      : " + String(heap_info.minimum_free_heap));
-  Serial.println("Used Heap          : " + String(heap_info.used_heap));
+  Serial.println("Free heap        : " + String(heap_info.free_heap));
+  Serial.println("Min Free heap    : " + String(heap_info.minimum_free_heap));
+  Serial.println("Used Heap        : " + String(heap_info.used_heap));
 }
 
-void printLinkedList(){
-  struct node *current = currentNode;
-  Serial.println("-----Linked List Contents-----");
-  do {
-    int value = current->data;
-    Serial.println(String(value));
-    current = current->next;
-  } while (current != currentNode);
-}
-
-// Function to create a circular linked list with a specified size
-struct node* createCircularLinkedList(int size) {
-  debug("Start createCircularLinkedList()");
-
-  struct node *head, *current, *temp;
-
-  // Create the first node
-  head = (struct node*) malloc(sizeof(struct node));
-  head->data = 1;
-  current = head;
-
-  // Create the rest of the nodes
-  for (int i = 0; i < size-1; i++) {
-    temp = (struct node*) malloc(sizeof(struct node));
-    temp->data = i;
-    current->next = temp;
-    current = temp;
-  }
-
-  // Link the last node to the head to create the circular linked list
-  current->next = head;
-
-  debug("Finished createCircularLinkedList()");
-
-  return head;
+/** 
+ * Prints out the contents of the linked list 
+ */
+template <typename T, std::size_t N> 
+void printArray(const T (&arr)[N]) { 
+    for (std::size_t i = 0; i < N; i++) {
+        Serial.println(arr[i]);
+    }
 }
 
 /**
@@ -160,31 +139,17 @@ struct node* createCircularLinkedList(int size) {
  * @param head pointer to the circular linked list to be populated with one complete cycle of sinusoid data
  * @return void
  */
- 
-void populateCircularLinkedList(struct node *head) {
-
-  debug("Start populateCircularLinkedList()");
-
-  struct node *current = head;
-
-  for (int i = 0; i < SAMPLES_PER_CYCLE; i++) {
+void populateWaveArray() {
+  int count = sizeof(waveValues) / sizeof(waveValues[0]);
+  for (int i = 0; i < count; i++) {
     float angleInDegrees = ((float)i) * (360.0/((float)SAMPLES_PER_CYCLE));
     float angleInRadians = 2.0 * PI * angleInDegrees / 360.0;
     if (DEBUG){
       Serial.println("i : degrees : radians " + String(i) + " : " + String(angleInDegrees) + " : " + String(angleInRadians));
     }
-    long value = ATTENUATION * (DAC_AMPLITUDE + DAC_AMPLITUDE * sin(angleInRadians));
-    //error check
-    if (value > DAC_BIT_DEPTH){
-      throw "ERROR: function populateCircularLinkedList(): waveform value exceeeded the DAC_BIT_DEPTH: DAC_BIT_DEPTH=" + String(DAC_BIT_DEPTH) + ", value=" + String(value);
-    }
-    current->data = value;
-    current = current->next;
+    long value = ATTENUATION * (MAX_DAC_AMPLITUDE + MAX_DAC_AMPLITUDE * sin(angleInRadians));
+    waveValues[i] = value;
   }
-  if (DEBUG){
-    printLinkedList();
-  }
-  debug("Finished populateCircularLinkedList()");
 }
 
 /** 
@@ -196,47 +161,44 @@ void populateCircularLinkedList(struct node *head) {
  *  3) advances the linked list to the next node 
 */
 void onTimer() {
-
   int waveform_value = 0;
 
   if (GENERATE_WAVES == STATIC){ //------STATIC GENERATION OF WAVEFORMS------
 
-    // get the waveform value from the linked list (value of 0 to 255)
-    waveform_value = currentNode->data;
+    // get the waveform value from the linked list
+    waveform_value = waveValues[waveSampleIndex];
     // output the voltage to the DAC_CHANNEL
     dac_output_voltage(DAC_CHANNEL, waveform_value);
-    // advance to the value in the linked list
-    currentNode = currentNode->next; 
+    // advance the index or reset to zero
+    waveSampleIndex++;
+    if (waveSampleIndex >= SAMPLES_PER_CYCLE){
+      waveSampleIndex = 0;
+    } 
 
   } else { //------DYNAMIC GENERATION OF WAVEFORMS------
 
-    debug("inside onTimer() dynamic block");
-    now = ((float)sampleCount) * ((float)MICROSECONDS_PER_SAMPLE); //seconds since start
-    debug("now=" + String(now));
+//   now = sampleCount * SECONDS_PER_SAMPLE; //seconds since start of sampling
 
-    for (int i=0; i<numberOfWaves; i++){
-      debug("wave# " + String(i));
-      waveform_value = i;
+    // Serial.print("now="); Serial.println(now);
+
+   for (int i=0; i<numberOfWaves; i++){
+
+      waveform_value = dynamic_value;
+
+      dynamic_value++;
+      if (dynamic_value > 255){
+        dynamic_value = 0;
+      }
+      // Add the value of each waveform's sample together. That is the output value. 
 
       // formula for a sine wave with frequency (ω) amplitude (A) and phase angle (φ)
       // f(t) = A sin(ωt + φ)
-      // float sine_value = sin(TWO_PI * frequencies[i] * ((float)now) + phases[i]); // sine_value is a float between +/-1.0
-//      debug("raw sine_value=" + String(sine_value));
+    //   double omega = TWO_PI * frequencies[i];
+    //   double simple_sine = sin(omega * now   +   phases[i]);
+    //  waveform_value = waveform_value + (ATTENUATION * ( ((float)MAX_DAC_AMPLITUDE) + ( ((float)MAX_DAC_AMPLITUDE) * (amplitudes[i] * (simple_sine))))); 
 
-      // single_wave_value is a float between 0.0 and 1.0
-      // float single_wave_value = amplitudes[i] * (sin(TWO_PI * frequencies[i] * ((float)now) + phases[i]));
-//      debug("single_wave_value=" + String(single_wave_value));
+   } //end for
 
-      // waveform_value = waveform_value + (ATTENUATION * ( ((float)DAC_AMPLITUDE) + ( ((float)DAC_AMPLITUDE) * (amplitudes[i] * (sin(TWO_PI * frequencies[i] * ((float)now) + phases[i])))))); 
-//      waveform_value = waveform_value + (ATTENUATION * (  (  single_wave_value))); 
-//        debug("waveform_value=" + String(waveform_value));
-
-      //error check
-      if (sizeof(waveform_value) > DAC_BIT_DEPTH){
-        throw "ERROR: function onTimer(): waveform_value exceeeded the DAC_BIT_DEPTH: DAC_BIT_DEPTH=" + String(DAC_BIT_DEPTH) + ", waveform_value=" + String(waveform_value);
-      }
-
-    } //end for
     dac_output_voltage(DAC_CHANNEL, waveform_value);
     sampleCount++;
 //    debug("output waveform_value=" + String(waveform_value) + ", sampleCount=" + String(sampleCount));
@@ -248,21 +210,51 @@ void onTimer() {
  * @brief Configures the callback timer. 
  * The frequency of the callbacks is determined by the SAMPLES_PER_SECOND.
  */
-void setupCallbackTimer() {
-  debug("Begin setupCallbackTimer()");
+void setupCallbackTimer() { //TODO my version of function 
   // set up timer 0 to generate a callback to onTimer() every 1 microsecond
-  int timer_id = 0; //the ESP32 has several timers. Just use 0. 
-  boolean countUp = true;
+  int timer_id = 1; //the ESP32 has several timers. 
+  boolean count_up = true;
 
-  // long MICROSECONDS_PER_SECOND = 1000000; //the timer has a resolution of 1 microsecond (nice!) 
-  // MICROSECONDS_PER_SAMPLE = MICROSECONDS_PER_SECOND / SAMPLES_PER_SECOND; //sets the global variable
-
-  timer = timerBegin(timer_id, TIMER_DIVIDER, countUp);
+  timer = timerBegin(timer_id, TIMER_DIVIDER, count_up);
   timerAttachInterrupt(timer, &onTimer, true);
   //timerAlarmWrite() sets up callbacks with a resolution of microseconds
   timerAlarmWrite(timer, MICROSECONDS_PER_SAMPLE, true);
   timerAlarmEnable(timer);
-//  debug("Finished setupCallbackTimer()");
+}
+
+//From ChatGPT
+/*
+* The ESP32 timer has 1 microsecond resolution (10^-6 secs).
+* The timer runs at 80MHz by default. The minimum time between callbacks 
+* is 1 timer tick so each tick takes 12.5 ns (1/80e6).
+* But it also depends on how you set the timer and how you implement 
+* the interrupt service routine.
+*
+* NOTE: With THIS implementation, I have found the minimum time between clicks
+* is 5.3 microseconds (i.e., a maximum sample rate of ~188,000 samples/second).
+*/
+void setupCallbackTimer_CHATGPT() { //TODO ChatGPT version of function
+    int timer_id = 1; //the ESP32 has several timers. 
+    boolean count_up = true;
+
+    // Get the APB clock frequency
+    uint32_t apb_freq = esp_clk_apb_freq(); //apb_freq=80000000 (80 MHz)
+    Serial.printf("apb_freq=%d\n", apb_freq);
+ 
+    // Set the tick duration to 1000 microseconds (1 ms)
+    uint32_t tick_duration_us = 1000000;
+    Serial.printf("tick_duration_us=%d\n", tick_duration_us); //25
+
+    // Calculate the prescaler value (this is the time between callbacks in milliseconds)
+//    uint32_t prescaler = (apb_freq / 1000000) * tick_duration_us - 1;
+    uint32_t prescaler = (apb_freq / 1000000) * tick_duration_us;
+    Serial.printf("prescaler=%d\n", prescaler); //1999
+
+    // Configure the timer
+    timer = timerBegin(timer_id, 80, count_up);   //80 is the timer divider
+    timerAttachInterrupt(timer, &onTimer, true);  //callback onTimer()
+    timerAlarmWrite(timer, 1, true);
+    timerAlarmEnable(timer);
 }
 
 /**
@@ -270,153 +262,148 @@ void setupCallbackTimer() {
  * 
  */
 void printSettings(){
-  debug("Start printSettings()");
-
   Serial.println();
   Serial.println();
   Serial.println("=======================================================");  
-  if (GENERATE_WAVES == STATIC){
-    Serial.println("Generate            : STATIC waveform data");
-  } else {
-    Serial.println("Generate            : DYNAMIC waveform data");
-  }
-  Serial.println("Frequency           : " + String(FREQUENCY) + " Hz");
-  Serial.println("Sample Rate         : " + String(SAMPLES_PER_SECOND) + " samples per second");
-  Serial.println("Attenuation         : " + String(ATTENUATION));
-  Serial.println("Samples Per Cycle   : " + String(SAMPLES_PER_CYCLE) + " samples per cycle");
-  Serial.println("uSeconds Per Sample : " + String(MICROSECONDS_PER_SAMPLE) + " microseconds per sample");
-  
+  Serial.println("Frequency            : " + String(FREQUENCY) + " Hz");
+  Serial.println("Sample Rate          : " + String(SAMPLES_PER_SECOND) + " samples per second");
+  Serial.println("Samples Per Cycle    : " + String(SAMPLES_PER_CYCLE) + " samples per cycle");
+  Serial.printf( "Seconds Per Sample   : %.8lf usec \n", SECONDS_PER_SAMPLE);
+  Serial.println("Microsecs Per Sample : " + String(MICROSECONDS_PER_SAMPLE) + " usec");
+  int apb_freq = esp_clk_apb_freq();
+  Serial.printf( "APB Timer Frequency  : %.8lf\n", esp_clk_apb_freq);
+
+
   uint32_t clock_speed = esp_clk_cpu_freq() / 1000000;  //MHz  
-  Serial.println("Clock_Speed         : " + String(clock_speed) + " MHz");
+  Serial.println("Clock_Speed          : " + String(clock_speed) + " MHz");
 
   printHeapInfo();
 
   Serial.println("=======================================================");
   Serial.println();
-
-  debug("Finished printSettings()");
 }
 
-void checkInputs(){
-  debug("Start checkInputs()");
-  
-  if (countElements(frequencies) != countElements(amplitudes) || countElements(frequencies) != countElements(phases)){
-    throw std::runtime_error("CONFIGURATION ERROR: The size of the 3 input arrays must be equal (frequencies, amplitudes and phases)");
+void checkConfig(){
+  if (FREQUENCY < 0.0){
+    String msg = "ERROR: checkConfig() FREQUENCY value must be positive. Found FREQUENCY=" + String(FREQUENCY);
+    Serial.println(msg);
+    throw msg;
   }
 
-  if (GENERATE_WAVES == DYNAMIC){
-    if (numberOfWaves > 0){
-      Serial.println("numberOfWaves=" + String(numberOfWaves));    
-    } else {
-      throw std::runtime_error("CONFIGURATION ERROR: DYNAMIC waveform generation specified but number of waveforms is zero");
-    }
+  if (SAMPLES_PER_SECOND < 0.0){
+    String msg = "ERROR: checkConfig() SAMPLES_PER_SECOND value must be positive. Found SAMPLES_PER_SECOND=" + String(FREQUENCY);
+    Serial.println(msg);
+    throw msg;
   }
 
-  debug("Finished checkInputs()");
+  if (ATTENUATION > 1.0 || ATTENUATION < 0.0){
+    String msg = "ERROR: checkConfig() ATTENUATION value must be between zero and one. Found ATTENUATION=" + String(ATTENUATION);
+    Serial.println(msg);
+    throw msg;
+  }
 }
 
-void initializeValues(){
-    MICROSECONDS_PER_SAMPLE = MICROSECONDS_PER_SECOND / SAMPLES_PER_SECOND; //sets the global variable
-    numberOfWaves = countElements(frequencies);
+/* 
+* Notes for future reference:
+* The xTimerChangePeriod() function can be use to change the period of the timer after it has been created.
+* The xTimerStop() function can be used to stop the timer.
+*/
+void setupFreeRTOSTimer()
+{
+    int timer_id = 5;
+    // Create a timer with a period of 1000ms
+    TimerHandle_t timer = xTimerCreate("FreeRTOSTimer", pdMS_TO_TICKS(1000), pdTRUE, ( void * )timer_id, &onFreeRTOSTimer);
+
+    // Start the timer
+    xTimerStart(timer, 0);
+
+    // Start the FreeRTOS scheduler
+    vTaskStartScheduler();
+}
+
+void onFreeRTOSTimer(TimerHandle_t xTimer)
+{
+    // This function will be called every time the timer expires
+
+    // Do something here, such as toggling an LED or updating a variable
+    printf("FreeRTOSTimer callback called\n");
 }
 
 void setup() {
-  debug("Start setup()");
   try {
 
     Serial.begin(115200); 
-    delay(1000); //a short delay to allow ESP32 to finish Serial output setup
+    delay(500); //a short delay to allow ESP32 to finish Serial output setup
 
-    initializeValues();
-    debug("setup(): initializeValues() DONE");
+    MICROSECONDS_PER_SAMPLE = MICROSECONDS_PER_SECOND / SAMPLES_PER_SECOND;
+    SECONDS_PER_SAMPLE = MICROSECONDS_PER_SAMPLE / 1000000;
 
     printSettings();
-    debug("setup(): printSettings() DONE");
 
-    checkInputs();
-    debug("setup(): checkInputs() DONE");
+    checkConfig();
 
-    if (GENERATE_WAVES == STATIC){
-      //statically generate all the waveform values
-      currentNode = createCircularLinkedList(SAMPLES_PER_CYCLE);
-      populateCircularLinkedList(currentNode);
-      debug("setup(): populateCircularLinkedList() DONE");
-    } else {
-      //we'll dynamically generating the waveform
-      debug("setup(): dynamically generating waveforms");
-    }
+    populateWaveArray();
 
-    dac_output_enable(DAC_CHANNEL);
-    debug("setup(): dac_output_enable() DONE");
+    dac_output_enable(DAC_CHANNEL); //do this before setupCallbackTimer() so the output channel is ready
 
     setupCallbackTimer(); 
-    debug("setup(): setupCallbackTimer() DONE");
 
-    debug("Finished setup()");
+    setupFreeRTOSTimer();
 
   } catch (const std::exception &exc) {
+    Serial.println("ERROR caught in setup()...");
     Serial.println(exc.what());
-    exit(0);
-  } 
-}
-
-/**
- * @brief Does nothing, since all the work is handled by the timer and onTimer()
- */
-void loop()
-{
-  unsigned long currentMillis = millis();
-  if(currentMillis - previousMillis > interval)
-  {
-   	previousMillis = currentMillis;
   }
 }
 
-/**
- * @brief Does nothing, since all the work is handled by the timer and onTimer()
- * Using the built-in delay()-function is considered bad practice due to various 
- * problems that the blocking function call causes. 
- */
-// void loop(){
-//   //do nothing, since the timer and its callbacks to onTimer() handle ALL of the work 
-//   delay(60000);
+// /**
+//  * @brief Does nothing, since all the work is handled by the timer and onTimer()
+//  */
+// void loop()
+// {
+//   unsigned long currentMillis = millis();
+//   if(currentMillis - previousMillis > interval)
+//   {
+//    	previousMillis = currentMillis;
+//   }
 // }
 
-
-//============================================================================
-//============================================================================
-//============================================================================
-//============================================================================
-/*
-int onTimer2() {
-
-    double result;  // combined sine wave
-
-    for (time = 0; time <= 1.0; time += 0.01) {
-        result = 0;
-        for (int i = 0; i < n; i++) {
-            result += amplitudes[i] * sin(2 * M_PI * frequencies[i] * time + phases[i]);
-        }
-        result *= decay;  // apply exponential decay
-        printf("%.2f\n", result);
-    }
-
-    return 0;
+/**
+ * @brief Does nothing, since all the work is handled by the timer and onTimer()
+ * 
+ */
+void loop(){
+  //do nothing, since the timer and its callbacks to onTimer() handle ALL of the work 
+  delay(60000);
 }
 
-  struct node *current = head;
+/*
+NOTES on optimizing/improving the performance of the callback timer. 
 
-  for (int i = 0; i < SAMPLES_PER_CYCLE; i++) {
-    float angleInDegrees = ((float)i) * (360.0/((float)SAMPLES_PER_CYCLE));
-    float angleInRadians = 2.0 * PI * angleInDegrees / 360.0;
-    if (DEBUG){
-      Serial.println("i : degrees : radians " + String(i) + " : " + String(angleInDegrees) + " : " + String(angleInRadians));
-    }
-    long value = ATTENUATION * (DAC_AMPLITUDE + DAC_AMPLITUDE * sin(angleInRadians));
-    current->data = value;
-    current = current->next;
-  }
-  if (DEBUG){
-    printLinkedList();
-  }
+--- The maximum rate of callbacks from the timer is what limits the maximum sample rate of this code ---
+
+There are several ways to implement a timer callback on the ESP32, each with its own advantages and disadvantages 
+in terms of performance.
+
+1) One method is to use the ESP32's built-in timer peripheral, which allows you to configure a timer to generate an 
+interrupt at a specific interval. This method is relatively simple to set up, but the performance may be limited 
+by the overhead of the interrupt handler.
+
+2) Another method is to use a FreeRTOS software timer, which allows you to create a timer task that runs in the 
+background and is scheduled by the FreeRTOS kernel. This method can provide higher performance than using the 
+built-in timer peripheral, as it allows you to offload the interrupt handling to a separate task.
+
+3) A third option is to use a Direct Memory Access (DMA) controller to transfer samples from memory to the DAC. 
+This method can provide the highest performance and the lowest CPU usage, but it requires more complex programming. 
+With DMA, the CPU does not need to be involved in the data transfer, allowing it to be used for other tasks.
+
+Regarding the maximum sample rate it can achieve for DAC output, it depends on how you implement the timer callback. 
+With DMA and a proper configuration, it can achieve high sample rate, such as tens of mega samples per second. 
+On the other hand, using the built-in timer peripheral or a FreeRTOS software timer, the maximum sample rate will be lower.
+
+Keep in mind that the actual achievable sample rate will also depend on factors such as the clock frequency of the 
+ESP32 and the accuracy of the timer.
+
+
+
 */
