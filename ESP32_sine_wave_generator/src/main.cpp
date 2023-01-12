@@ -34,8 +34,8 @@
 #include "clk.h"
 
 //Configurable items: specify the output frequency, sample rate, attenuation and DAC Channel
-#define FREQUENCY           3000    // the desired frequency (Hz) of the output waveform
-#define SAMPLES_PER_SECOND  200000  // (180000 max) ADC samples per second. Per Nyquist, set this at least 2 x FREQUENCY
+#define FREQUENCY           2000    // the desired frequency (Hz) of the output waveform
+#define SAMPLES_PER_SECOND  180000  // (180000 max) ADC samples per second. Per Nyquist, set this at least 2 x FREQUENCY
 #define ATTENUATION         0.8     // output waveform voltage attenuation (must be 1.0 or less)
 #define DAC_CHANNEL         DAC_CHANNEL_1 // the waveform output pin. (e.g., DAC_CHANNEL_1 or DAC_CHANNEL_2)
 
