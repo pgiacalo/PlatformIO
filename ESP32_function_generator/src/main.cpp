@@ -30,11 +30,12 @@
  * @date 2023-01-11
  */
 
+
 #include <Arduino.h>
 #include "driver/dac.h"
 #include "driver/timer.h"
 #include "clk.h"
-#include "stdio.h"
+#include <stdio.h>
 
 // If using the FreeRTOS timer (which is faster than the built-in timer peripherals)
 #include "freertos/FreeRTOS.h"
@@ -42,13 +43,13 @@
 #include "freertos/timers.h"
 
 //Configurable items: specify the output frequency, sample rate, attenuation and DAC Channel
-#define FREQUENCY           4400    // the desired frequency (Hz) of the output waveform
-#define SAMPLES_PER_SECOND  1000  // ADC samples per second. Per Nyquist, set this at least 2 x FREQUENCY
+#define FREQUENCY           200    // the desired frequency (Hz) of the output waveform
+#define SAMPLES_PER_SECOND  150000  // ADC samples per second. Per Nyquist, set this at least 2 x FREQUENCY
 #define ATTENUATION         0.5     // output waveform voltage attenuation (must be 1.0 or less)
 #define DAC_CHANNEL         DAC_CHANNEL_1 // the waveform output pin. (e.g., DAC_CHANNEL_1 or DAC_CHANNEL_2)
 #define STATIC              0
 #define DYNAMIC             1
-#define GENERATE_WAVES      DYNAMIC 
+#define GENERATE_WAVES      STATIC 
 
 double frequencies[] = {100.0};   // Hz, frequencies of the sine waves
 double amplitudes[] = {0.5};       // amplitudes of the sine waves (range is from 0.0 to 1.0)
@@ -65,6 +66,18 @@ double decay = 0.99;          // decay coefficient
 #define MAX_DAC_AMPLITUDE   127     // (127) amplitude is half of peak-to-peak
 #define TIMER_DIVIDER       80      // (80) timer frequency divider. timer runs at 80MHz by default. 
 
+//FreeRTOS testing
+typedef struct {
+  int counter;
+} timer_data_t;
+
+
+//FreeRTOS testing - used in newer version of api (that I don't have!)
+#define TIMER_STACK_SIZE (1024 * 4)
+StackType_t timer_stack[4096];
+StaticTask_t timer_task;
+
+
 //the following are set by the system at runtime
 double now = 0.0;                     // seconds. keeps track of the time (time since start-up in seconds)
 double sampleCount = 0.0;               // keeps track of time steps, when dynamically generating the waveforms
@@ -79,6 +92,7 @@ int waveValues[SAMPLES_PER_CYCLE];
 int waveSampleIndex = 0;
 
 int dynamic_value = 0;  //TODO remove eventually. just for testing DYNAMIC.
+int waveform_value = 0;
 
 unsigned long previousMillis = 0UL;
 unsigned long interval = 120000UL; //120 seconds
@@ -152,6 +166,47 @@ void populateWaveArray() {
   }
 }
 
+// utility function to get count of elements in any given array
+template <typename T, size_t N>
+size_t getElementCount(T (&array)[N]) {
+    return N;
+}
+
+/* 
+The following equation represents a wave that oscillates sinusoidally 
+with a frequency of f while its amplitude decays exponentially over time 
+with a decay constant of a.
+
+y(t) = A * e^(-at) * sin(2πft + φ)
+
+where:
+
+y(t) is the amplitude of the wave at time t
+A is the initial amplitude of the wave
+e is the base of the natural logarithm (approximately 2.718)
+a is the decay constant, which determines how quickly the amplitude of the wave decays over time
+t is time
+f is the frequency of the wave in cycles per second
+π (pi) is the mathematical constant (approximately 3.14)
+φ is the phase angle in radians
+*/
+struct waveform {
+    //frequency in cycles/second
+    float frequency;
+    //amplitude between 0.0 and 1.0
+    float amplitude;
+    //phase_angle in radians
+    float phase_angle;
+    //determines how quickly the amplitude of the wave decays over time
+    float decay_constant;
+};
+
+struct waveform waveform1 = { 2.0, 0.8, 1.57, 0.1 };
+struct waveform waveform2 = { 10.0, 0.2, 3.14, 0.1 };
+
+waveform waves[] = {waveform1, waveform2};
+
+
 /** 
  * The function generates and outputs the sine wave to the DAC channel.
  * It is called periodically by the timer. 
@@ -161,7 +216,6 @@ void populateWaveArray() {
  *  3) advances the linked list to the next node 
 */
 void onTimer() {
-  int waveform_value = 0;
 
   if (GENERATE_WAVES == STATIC){ //------STATIC GENERATION OF WAVEFORMS------
 
@@ -177,33 +231,42 @@ void onTimer() {
 
   } else { //------DYNAMIC GENERATION OF WAVEFORMS------
 
-//   now = sampleCount * SECONDS_PER_SAMPLE; //seconds since start of sampling
+    int64_t time_since_boot = esp_timer_get_time(); //microseconds
+    double _t_ = time_since_boot/1000000.0;
+    // ESP_LOGI(TAG, "Periodic timer called, time since boot: %lld us", time_since_boot);
 
-    // Serial.print("now="); Serial.println(now);
+    float y = 0;  //the final value to be sent to the ESP32 output pin (between 0 and 255)
+    int waveCount = getElementCount(waves);
+    for (int i=0; i<waveCount; i++){
+      waveform w = waves[i];
+      // y(t) = A * e^(-at) * sin(2πft + φ)
+      float exponential = pow(M_E, (-1) * w.decay_constant * _t_);
+      float angle = M_TWOPI * w.frequency * _t_ + w.phase_angle;
+      //sum all the y values as floats in order to maintain resolution during the calculations
+      y = y + ( w.amplitude * exponential * ( 127.0 + ( 127.0 * sin(angle) )));
+    }
+    dac_output_voltage(DAC_CHANNEL_1, ((int)y));
 
-   for (int i=0; i<numberOfWaves; i++){
+    // //------------ old way --------------
+    // //data for each waveform (frequency, amplitude, phase angle, attenuation)
+    // float wave1[] = {100.0, 0.5, 0.0, 0.5};
+    // float wave2[] = {1000.0, 0.1, 0.0, 0.5};
 
-      waveform_value = dynamic_value;
+    // // formula for a sine wave with frequency (ω) amplitude (A) and phase angle (φ)
+    // //   f(t) = A sin(ωt + φ)    
+    // float waveform1 = (wave1[3] * ( ((float)127) + ( ((float)127) * (wave1[1] * (sin(M_TWOPI * wave1[0] * _t_ + wave1[2])))))); 
+    // float waveform2 = (wave2[3] * ( ((float)127) + ( ((float)127) * (wave2[1] * (sin(M_TWOPI * wave2[0] * _t_ + wave2[2])))))); 
+    // // printf("%.9f\t", now);
+    // // printf("%.3f\t", waveform1);
+    // // printf("%.3f\t", waveform2);
+    // int output = (int)(waveform1 + waveform2);
+    // // printf("%d\n", output);
+    
+    // dac_output_voltage(DAC_CHANNEL_1, output);
 
-      dynamic_value++;
-      if (dynamic_value > 255){
-        dynamic_value = 0;
-      }
-      // Add the value of each waveform's sample together. That is the output value. 
+//    } //end for numberOfWaves
 
-      // formula for a sine wave with frequency (ω) amplitude (A) and phase angle (φ)
-      // f(t) = A sin(ωt + φ)
-    //   double omega = TWO_PI * frequencies[i];
-    //   double simple_sine = sin(omega * now   +   phases[i]);
-    //  waveform_value = waveform_value + (ATTENUATION * ( ((float)MAX_DAC_AMPLITUDE) + ( ((float)MAX_DAC_AMPLITUDE) * (amplitudes[i] * (simple_sine))))); 
-
-   } //end for
-
-    dac_output_voltage(DAC_CHANNEL, waveform_value);
-    sampleCount++;
-//    debug("output waveform_value=" + String(waveform_value) + ", sampleCount=" + String(sampleCount));
-
-  } //end else
+  } //end else DYNAMIC
 }
 
 /**
@@ -220,41 +283,6 @@ void setupCallbackTimer() { //TODO my version of function
   //timerAlarmWrite() sets up callbacks with a resolution of microseconds
   timerAlarmWrite(timer, MICROSECONDS_PER_SAMPLE, true);
   timerAlarmEnable(timer);
-}
-
-//From ChatGPT
-/*
-* The ESP32 timer has 1 microsecond resolution (10^-6 secs).
-* The timer runs at 80MHz by default. The minimum time between callbacks 
-* is 1 timer tick so each tick takes 12.5 ns (1/80e6).
-* But it also depends on how you set the timer and how you implement 
-* the interrupt service routine.
-*
-* NOTE: With THIS implementation, I have found the minimum time between clicks
-* is 5.3 microseconds (i.e., a maximum sample rate of ~188,000 samples/second).
-*/
-void setupCallbackTimer_CHATGPT() { //TODO ChatGPT version of function
-    int timer_id = 1; //the ESP32 has several timers. 
-    boolean count_up = true;
-
-    // Get the APB clock frequency
-    uint32_t apb_freq = esp_clk_apb_freq(); //apb_freq=80000000 (80 MHz)
-    Serial.printf("apb_freq=%d\n", apb_freq);
- 
-    // Set the tick duration to 1000 microseconds (1 ms)
-    uint32_t tick_duration_us = 1000000;
-    Serial.printf("tick_duration_us=%d\n", tick_duration_us); //25
-
-    // Calculate the prescaler value (this is the time between callbacks in milliseconds)
-//    uint32_t prescaler = (apb_freq / 1000000) * tick_duration_us - 1;
-    uint32_t prescaler = (apb_freq / 1000000) * tick_duration_us;
-    Serial.printf("prescaler=%d\n", prescaler); //1999
-
-    // Configure the timer
-    timer = timerBegin(timer_id, 80, count_up);   //80 is the timer divider
-    timerAttachInterrupt(timer, &onTimer, true);  //callback onTimer()
-    timerAlarmWrite(timer, 1, true);
-    timerAlarmEnable(timer);
 }
 
 /**
@@ -303,32 +331,6 @@ void checkConfig(){
   }
 }
 
-/* 
-* Notes for future reference:
-* The xTimerChangePeriod() function can be use to change the period of the timer after it has been created.
-* The xTimerStop() function can be used to stop the timer.
-*/
-void setupFreeRTOSTimer()
-{
-    int timer_id = 5;
-    // Create a timer with a period of 1000ms
-    TimerHandle_t timer = xTimerCreate("FreeRTOSTimer", pdMS_TO_TICKS(1000), pdTRUE, ( void * )timer_id, &onFreeRTOSTimer);
-
-    // Start the timer
-    xTimerStart(timer, 0);
-
-    // Start the FreeRTOS scheduler
-    vTaskStartScheduler();
-}
-
-void onFreeRTOSTimer(TimerHandle_t xTimer)
-{
-    // This function will be called every time the timer expires
-
-    // Do something here, such as toggling an LED or updating a variable
-    printf("FreeRTOSTimer callback called\n");
-}
-
 void setup() {
   try {
 
@@ -348,34 +350,32 @@ void setup() {
 
     setupCallbackTimer(); 
 
-    setupFreeRTOSTimer();
-
   } catch (const std::exception &exc) {
     Serial.println("ERROR caught in setup()...");
     Serial.println(exc.what());
   }
 }
 
-// /**
-//  * @brief Does nothing, since all the work is handled by the timer and onTimer()
-//  */
-// void loop()
-// {
-//   unsigned long currentMillis = millis();
-//   if(currentMillis - previousMillis > interval)
-//   {
-//    	previousMillis = currentMillis;
-//   }
-// }
-
 /**
  * @brief Does nothing, since all the work is handled by the timer and onTimer()
- * 
  */
-void loop(){
-  //do nothing, since the timer and its callbacks to onTimer() handle ALL of the work 
-  delay(60000);
+void loop()
+{
+  unsigned long currentMillis = millis();
+  if(currentMillis - previousMillis > interval)
+  {
+   	previousMillis = currentMillis;
+  }
 }
+
+// /**
+//  * @brief Does nothing, since all the work is handled by the timer and onTimer()
+//  * 
+//  */
+// void loop(){
+//   //do nothing, since the timer and its callbacks to onTimer() handle ALL of the work 
+//   delay(60000);
+// }
 
 /*
 NOTES on optimizing/improving the performance of the callback timer. 
