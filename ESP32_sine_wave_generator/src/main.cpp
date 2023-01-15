@@ -33,6 +33,7 @@
 #include "driver/timer.h"
 #include "clk.h"
 #include "math.h"
+#include "locale.h"
 
 //Configurable items: specify the output frequency, sample rate, attenuation and DAC Channel
 #define FREQUENCY           3000    // the desired frequency (Hz) of the output waveform
@@ -173,17 +174,17 @@ void printSettings(){
   Serial.println();
   Serial.println();
   Serial.println("=======================================================");  
-  Serial.println("Frequency            : " + String(FREQUENCY) + " Hz");
-  Serial.println("Sample Rate          : " + String(SAMPLES_PER_SECOND) + " samples per second");
-  Serial.println("Samples Per Cycle    : " + String(SAMPLES_PER_CYCLE) + " samples per cycle");
-  Serial.printf( "Seconds Per Sample   : %.8lf seconds \n", SECONDS_PER_SAMPLE);
-  Serial.printf( "Microsecs Per Sample : %.3lf usec \n", MICROSECONDS_PER_SAMPLE);
+  Serial.printf("Frequency            : %d Hz \n", FREQUENCY);
+  Serial.printf("Sample Rate          : %d samples per second \n", SAMPLES_PER_SECOND);
+  Serial.printf("Samples Per Cycle    : %d samples per cycle \n", SAMPLES_PER_CYCLE);
+  // Serial.printf("Seconds Per Sample   : %.9lf seconds \n", SECONDS_PER_SAMPLE);
+  Serial.printf("Microsecs Per Sample : %.3lf usec \n", MICROSECONDS_PER_SAMPLE);
 
   int apb_freq = esp_clk_apb_freq();
-  Serial.printf( "APB Timer Period     : %.3lf usec\n", apb_freq);
+  Serial.printf("APB Timer Period     : %.3lf usec \n", apb_freq);
 
   uint32_t clock_speed = esp_clk_cpu_freq() / 1000000;  //MHz  
-  Serial.println("Clock_Speed          : " + String(clock_speed) + " MHz");
+  Serial.printf("Clock_Speed          : %d MHz \n", clock_speed);
 
   printHeapInfo();
 
