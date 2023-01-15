@@ -33,7 +33,6 @@
 #include "driver/timer.h"
 #include "clk.h"
 #include "math.h"
-#include "locale.h"
 
 //Configurable items: specify the output frequency, sample rate, attenuation and DAC Channel
 #define FREQUENCY           3000    // the desired frequency (Hz) of the output waveform
@@ -104,7 +103,7 @@ void printArray(const T (&arr)[N]) {
 }
 
 /**
- * @brief Populates the given array with one complete cycle of sinusoid data
+ * @brief Populates the global array with one complete cycle of sinusoid data
  * 
  * Since we know the SAMPLES_PER_CYCLE of the waveform, we'll put that many values into the array.
  * The timer will call function onTimer() at the precise rate needed to produce the desired 
