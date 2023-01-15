@@ -32,11 +32,12 @@
 #include "driver/dac.h"
 #include "driver/timer.h"
 #include "clk.h"
+#include "math.h"
 
 //Configurable items: specify the output frequency, sample rate, attenuation and DAC Channel
-#define FREQUENCY           2000    // the desired frequency (Hz) of the output waveform
+#define FREQUENCY           3000    // the desired frequency (Hz) of the output waveform
 #define SAMPLES_PER_SECOND  180000  // (180000 max) ADC samples per second. Per Nyquist, set this at least 2 x FREQUENCY
-#define ATTENUATION         0.8     // output waveform voltage attenuation (must be 1.0 or less)
+#define ATTENUATION         1.0     // output waveform voltage attenuation (must be 1.0 or less)
 #define DAC_CHANNEL         DAC_CHANNEL_1 // the waveform output pin. (e.g., DAC_CHANNEL_1 or DAC_CHANNEL_2)
 
 //These items should probably be left as-is
@@ -44,6 +45,7 @@
 #define DEBUG               false
  
 //Do NOT change the following 
+#define VERTICAL_OFFSET     1.0     // must be 1.0, in order to avoid negative output voltages
 #define SAMPLES_PER_CYCLE   SAMPLES_PER_SECOND/FREQUENCY 
 #define MAX_DAC_VALUE       255     // (255) the maximum ESP32 DAC value, peak-to-peak (8 bit DAC fixed in hardware)
 #define MAX_DAC_AMPLITUDE   127     // (127) amplitude is half of peak-to-peak
@@ -114,11 +116,12 @@ void populateWaveArray() {
   int count = sizeof(waveValues) / sizeof(waveValues[0]);
   for (int i = 0; i < count; i++) {
     float angleInDegrees = ((float)i) * (360.0/((float)SAMPLES_PER_CYCLE));
-    float angleInRadians = 2.0 * PI * angleInDegrees / 360.0;
+    float angleInRadians = DEG_TO_RAD * angleInDegrees;
     if (DEBUG){
       Serial.println("i : degrees : radians " + String(i) + " : " + String(angleInDegrees) + " : " + String(angleInRadians));
     }
-    long value = ATTENUATION * (MAX_DAC_AMPLITUDE + MAX_DAC_AMPLITUDE * sin(angleInRadians));
+    //note: a vertical offset is needed to avoid negative output voltages 
+    long value = MAX_DAC_AMPLITUDE * ATTENUATION * (VERTICAL_OFFSET + sin(angleInRadians));
     waveValues[i] = value;
   }
   if (DEBUG){

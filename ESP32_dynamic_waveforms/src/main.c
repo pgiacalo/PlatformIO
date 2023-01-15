@@ -31,6 +31,9 @@ f is the frequency of the wave in cycles per second
 φ is the phase angle in radians
 
 */
+
+#include "FastTrig.h"
+
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_system.h"
@@ -51,8 +54,14 @@ f is the frequency of the wave in cycles per second
 #include <math.h>
 
 
-
 #define VERSION         1      //used to switch from v0 (old) to v1 (new) code
+
+// configurable setting
+#define SAMPLES_PER_SECOND          100000   //max is ~1800 for ESP32 boards
+
+// set automatically
+const int MICROSECONDS_PER_SECOND   = 1000000;
+int MICROSECONDS_PER_SAMPLE         = MICROSECONDS_PER_SECOND / SAMPLES_PER_SECOND;
 
 int callbackInMicroseconds = 100;
 
@@ -70,6 +79,8 @@ struct waveform {
     float phase_angle;
     // a - controls the waveform decay rate
     float decay;
+    // vertical offset
+    float y_offset;
 };
 
 struct waveform waveforms[];
@@ -81,18 +92,20 @@ void setupWaveforms(){
 
     //define several waveforms
     struct waveform w1;
-    w1.frequency = 10.0;
+    w1.frequency = 1000.0;
     w1.amplitude = 0.8;
     w1.phase_angle = 1.57;
-    w1.decay = 0.1;
+    w1.decay = 0.02;
+    w1.y_offset = 1.0;  //must be set to 1.0 to avoid negative voltage outputs
 
     waveforms[0] = w1;
 
     // struct waveform w2;
-    // w2.frequency = 100.0;
+    // w2.frequency = 1000.0;
     // w2.amplitude = 0.2;
     // w2.phase_angle = 3.14;
-    // w2.decay = 0.2;
+    // w2.decay = 0.02;
+    // w1.y_offset = 1.0;  //must be set to 1.0 to avoid negative voltage outputs
 
     // waveforms[1] = w2;
 }
@@ -112,6 +125,7 @@ static void periodic_timer_callback(void* arg);
 // static void oneshot_timer_callback(void* arg);
 
 static const char* TAG = "example";
+
 
 void app_main(void)
 {
@@ -150,7 +164,7 @@ void app_main(void)
 
 
     /* Start the timers */
-    ESP_ERROR_CHECK(esp_timer_start_periodic(periodic_timer, callbackInMicroseconds));  //500,000 microseconds (1/2 sec)
+    ESP_ERROR_CHECK(esp_timer_start_periodic(periodic_timer, MICROSECONDS_PER_SAMPLE));  //microsecond timer resolution
     // ESP_ERROR_CHECK(esp_timer_start_once(oneshot_timer, 5000000));      //5,000,000 microseconds (5 secs)
     ESP_LOGI(TAG, "Started timers, time since boot: %lld us", esp_timer_get_time());
 
@@ -196,11 +210,15 @@ static void periodic_timer_callback(void* arg)
     float y = 0;  //the final value to be sent to the ESP32 output pin (between 0 and 255)
     for (int i=0; i<waveCount; i++){
         struct waveform w = waveforms[i];
-        // y(t) = A * e^(-at) * sin(2πft + φ)
-        float exponential = pow(M_E, (-1) * w.decay * _t_);
+        // y(t) = A * e^(-at) * sin(2πft + 
+        float exponential = 1.0;
+        if (w.decay > 0){
+            exponential = pow(M_E, (-1) * w.decay * _t_);
+        }
         float angle = M_TWOPI * w.frequency * _t_ + w.phase_angle;
         //sum all the y values as floats in order to maintain resolution during the calculations
-        y = y + ( w.amplitude * exponential * ( 127.0 + ( 127.0 * sin(angle) )));
+        // y = y + ( w.amplitude * exponential * ( 127.0 + ( 127.0 * isin(angle) ))); //isin() FastTrig value lookup
+        y = y + (127 * w.amplitude * exponential * ( w.y_offset + isin(angle) )); //isin() FastTrig value lookup
     }
     dac_output_voltage(DAC_CHANNEL_1, ((int)y));
     // ------------- END new way not working --------------
