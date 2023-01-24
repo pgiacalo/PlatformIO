@@ -31,11 +31,11 @@
 #include <Arduino.h>
 #include "driver/dac.h"
 #include "driver/timer.h"
-#include "clk.h"
+// #include "clk.h"
 #include "math.h"
 
 //Configurable items: specify the output frequency, sample rate, attenuation and DAC Channel
-#define FREQUENCY           3000    // the desired frequency (Hz) of the output waveform
+#define FREQUENCY           2000    // the desired frequency (Hz) of the output waveform
 #define SAMPLES_PER_SECOND  180000  // (180000 max) ADC samples per second. Per Nyquist, set this at least 2 x FREQUENCY
 #define ATTENUATION         1.0     // output waveform voltage attenuation (must be 1.0 or less)
 #define DAC_CHANNEL         DAC_CHANNEL_1 // the waveform output pin. (e.g., DAC_CHANNEL_1 or DAC_CHANNEL_2)
@@ -76,8 +76,7 @@ typedef struct {
 heap_info_t heap_info;
 
 //utility function
-void get_heap_info(heap_info_t *info)
-{
+void get_heap_info(heap_info_t *info){
     info->free_heap = esp_get_free_heap_size();
     info->minimum_free_heap = esp_get_minimum_free_heap_size();
     info->used_heap = info->free_heap - info->minimum_free_heap;
@@ -179,11 +178,12 @@ void printSettings(){
   // Serial.printf("Seconds Per Sample   : %.9lf seconds \n", SECONDS_PER_SAMPLE);
   Serial.printf("Microsecs Per Sample : %.3lf usec \n", MICROSECONDS_PER_SAMPLE);
 
-  int apb_freq = esp_clk_apb_freq();
-  Serial.printf("APB Timer Period     : %.3lf usec \n", apb_freq);
+  // commented out to avoid compile failure in ESP-IDF version 5.1 (clk.h was made private) 
+  // int apb_freq = esp_clk_apb_freq();
+  // Serial.printf("APB Timer Period     : %.3lf usec \n", apb_freq);
 
-  uint32_t clock_speed = esp_clk_cpu_freq() / 1000000;  //MHz  
-  Serial.printf("Clock_Speed          : %d MHz \n", clock_speed);
+  // uint32_t clock_speed = esp_clk_cpu_freq() / 1000000;  //MHz  
+  // Serial.printf("Clock_Speed          : %d MHz \n", clock_speed);
 
   printHeapInfo();
 
